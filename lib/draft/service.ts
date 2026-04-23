@@ -7,7 +7,7 @@ import { normalizePlayerName } from "@/lib/utils/draft";
 import { calculateRosterTotals, getCurrentDraftWindow, validateDraftIntegrity, validateLeagueTotals } from "@/lib/validation/draft";
 
 export async function getLeagueSnapshot(): Promise<LeagueSnapshot> {
-  const [owners, ownerCodes, rawSlots, keepers, rosterLimits, settings] = await Promise.all([
+  const [owners, ownerCodes, rawSlots, keepers, rosterLimits, settings] = await prisma.$transaction([
     prisma.owner.findMany({ orderBy: { name: "asc" } }),
     prisma.ownerCode.findMany({ orderBy: [{ code: "asc" }] }),
     prisma.draftSlot.findMany({
@@ -116,11 +116,9 @@ async function enforceOwnerSportLimit(
 }
 
 async function ensureDraftIntegrity(tx: Prisma.TransactionClient) {
-  const [owners, slots, settings] = await Promise.all([
-    tx.owner.findMany(),
-    tx.draftSlot.findMany(),
-    tx.leagueSettings.findFirstOrThrow(),
-  ]);
+  const owners = await tx.owner.findMany();
+  const slots = await tx.draftSlot.findMany();
+  const settings = await tx.leagueSettings.findFirstOrThrow();
 
   const draftIntegrity = validateDraftIntegrity({
     owners,
