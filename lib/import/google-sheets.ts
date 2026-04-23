@@ -541,17 +541,27 @@ export async function syncLeagueFromKeeperGoogleSheet(config: GoogleSheetSourceC
 
     const rebuiltDraftSlots = buildSnakeDraftOrder(ownerIdsInSheetOrder, totalRounds);
 
-    for (const slot of rebuiltDraftSlots) {
-      await tx.draftSlot.create({
-        data: {
-          round: slot.round,
-          slotNumber: slot.slotNumber,
-          overallPickNumber: slot.overallPickNumber,
-          defaultOwnerId: slot.ownerId,
-          currentOwnerId: slot.ownerId,
-        },
-      });
-    }
+    await tx.draftSlot.createMany({
+      data: rebuiltDraftSlots.map((slot) => ({
+        round: slot.round,
+        slotNumber: slot.slotNumber,
+        overallPickNumber: slot.overallPickNumber,
+        defaultOwnerId: slot.ownerId,
+        currentOwnerId: slot.ownerId,
+      })),
+    });
+
+    const slotByRoundAndDefaultOwnerId = new Map(
+      (
+        await tx.draftSlot.findMany({
+          select: {
+            id: true,
+            round: true,
+            defaultOwnerId: true,
+          },
+        })
+      ).map((slot) => [`${slot.round}:${slot.defaultOwnerId}`, slot]),
+    );
 
     for (const entry of keeperEntries) {
       const defaultOwner = ownerByName.get(entry.defaultOwnerName);
@@ -559,12 +569,7 @@ export async function syncLeagueFromKeeperGoogleSheet(config: GoogleSheetSourceC
         continue;
       }
 
-      const slot = await tx.draftSlot.findFirst({
-        where: {
-          round: entry.round,
-          defaultOwnerId: defaultOwner.id,
-        },
-      });
+      const slot = slotByRoundAndDefaultOwnerId.get(`${entry.round}:${defaultOwner.id}`);
 
       if (!slot) {
         continue;
@@ -637,6 +642,9 @@ export async function syncLeagueFromKeeperGoogleSheet(config: GoogleSheetSourceC
         currentDraftRound: nextOpenSlot?.round ?? null,
       },
     });
+  }, {
+    maxWait: 10_000,
+    timeout: 30_000,
   });
 
   return {
