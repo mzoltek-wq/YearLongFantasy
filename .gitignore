@@ -1,0 +1,10 @@
+node_modules
+.next
+.turbo
+dist
+coverage
+pnpm-debug.log*
+.env
+.DS_Store
+prisma/dev.db
+prisma/dev.db-journal

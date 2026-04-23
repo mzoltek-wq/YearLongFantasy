@@ -1,0 +1,54 @@
+"use client";
+
+import Link from "next/link";
+import { ReactNode } from "react";
+import { usePathname } from "next/navigation";
+
+const links = [
+  { href: "/draft", label: "Draft" },
+  { href: "/tracker", label: "Tracker" },
+  { href: "/dashboard", label: "Dashboard" },
+  { href: "/owners", label: "Owners" },
+  { href: "/admin", label: "Admin" },
+  { href: "/private", label: "Private" },
+];
+
+export function AppShell({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+
+  if (pathname.startsWith("/tracker")) {
+    return <>{children}</>;
+  }
+
+  return (
+    <div className="min-h-screen">
+      <header className="border-b border-[var(--border)] bg-[rgba(255,253,247,0.88)] backdrop-blur">
+        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-6 lg:flex-row lg:items-end lg:justify-between">
+          <div className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.4em] text-[var(--muted)]">Fantasy Keeper HQ</p>
+            <div>
+              <h1 className="text-3xl font-semibold tracking-tight">Multi-sport fantasy keeper league control room</h1>
+              <p className="max-w-3xl text-sm text-[var(--muted)]">
+                Shared live draft board, commissioner tooling, and private draft workspace in one app.
+              </p>
+            </div>
+          </div>
+
+          <nav className="flex flex-wrap gap-2">
+            {links.map((link) => (
+              <Link
+                className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-4 py-2 text-sm font-medium transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                href={link.href}
+                key={link.href}
+              >
+                {link.label}
+              </Link>
+            ))}
+          </nav>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-7xl px-6 py-8">{children}</main>
+    </div>
+  );
+}

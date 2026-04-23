@@ -1,0 +1,214 @@
+generator client {
+  provider = "prisma-client-js"
+  engineType = "binary"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Sport {
+  HOCKEY
+  BASEBALL
+  FOOTBALL
+  BASKETBALL
+  GOLF
+}
+
+enum UserRole {
+  ADMIN
+  EDITOR
+  VIEWER
+  PRIVATE_OWNER_WORKSPACE
+}
+
+enum IntegrationType {
+  ESPN
+  CSV_IMPORT
+  GOOGLE_SHEETS
+  MANUAL_ENTRY
+}
+
+model Owner {
+  id            String      @id @default(cuid())
+  name          String      @unique
+  code          String      @unique
+  draftSlots    DraftSlot[] @relation("DraftSlotDefaultOwner")
+  currentSlots  DraftSlot[] @relation("DraftSlotCurrentOwner")
+  keepers       Keeper[]
+  ownerCodes    OwnerCode[]
+  watchlist     WatchlistEntry[]
+  strategies    DraftStrategyProfile[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+model OwnerCode {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  label     String
+  ownerId   String
+  owner     Owner    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model DraftSlot {
+  id                 String   @id @default(cuid())
+  round              Int
+  slotNumber         Int
+  overallPickNumber  Int      @unique
+  defaultOwnerId     String
+  overrideOwnerCode  String?
+  currentOwnerId     String
+  selectedPlayerId   String?
+  selectedPlayerName String?
+  selectedSport      Sport?
+  isKeeper           Boolean  @default(false)
+  originalRawValue   String?
+  selectedAt         DateTime?
+  defaultOwner       Owner    @relation("DraftSlotDefaultOwner", fields: [defaultOwnerId], references: [id], onDelete: Cascade)
+  currentOwner       Owner    @relation("DraftSlotCurrentOwner", fields: [currentOwnerId], references: [id], onDelete: Cascade)
+  selectedPlayer     Player?  @relation(fields: [selectedPlayerId], references: [id], onDelete: SetNull)
+  keeper             Keeper?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([round, slotNumber])
+}
+
+model Keeper {
+  id            String    @id @default(cuid())
+  ownerId       String
+  playerId      String?
+  playerName    String
+  sport         Sport
+  tag           String?
+  draftSlotId   String?   @unique
+  originalValue String?
+  owner         Owner     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  player        Player?   @relation(fields: [playerId], references: [id], onDelete: SetNull)
+  draftSlot     DraftSlot? @relation(fields: [draftSlotId], references: [id], onDelete: SetNull)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model RosterLimit {
+  id            String   @id @default(cuid())
+  sport         Sport    @unique
+  perOwnerLimit Int
+  leagueTotal   Int
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model LeagueSettings {
+  id                           String   @id @default(cuid())
+  expectedTotalPlayersPerOwner Int?
+  totalRounds                  Int      @default(15)
+  currentDraftRound            Int?
+  currentDraftPick             Int?
+  createdAt                    DateTime @default(now())
+  updatedAt                    DateTime @updatedAt
+}
+
+model Player {
+  id             String           @id @default(cuid())
+  normalizedName String           @unique
+  displayName    String
+  sport          Sport
+  metadata       Json?
+  rankings       Ranking[]
+  notes          PlayerNote[]
+  watchers       WatchlistEntry[]
+  draftedIn      DraftSlot[]
+  keepers        Keeper[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+}
+
+model Ranking {
+  id         String   @id @default(cuid())
+  playerId    String
+  source      String
+  rank        Int
+  tier        Int?
+  projection  Float?
+  isPrivate   Boolean  @default(false)
+  player      Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([playerId, source, isPrivate])
+}
+
+model User {
+  id        String            @id @default(cuid())
+  email     String            @unique
+  name      String
+  role      UserRole
+  notes     PlayerNote[]
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+}
+
+model WatchlistEntry {
+  id         String   @id @default(cuid())
+  ownerId     String
+  playerId    String
+  isDoNotDraft Boolean @default(false)
+  tierOverride Int?
+  notes       String?
+  owner       Owner    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  player      Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([ownerId, playerId])
+}
+
+model PlayerNote {
+  id           String   @id @default(cuid())
+  playerId      String
+  authorUserId  String
+  note          String
+  isPrivate     Boolean  @default(true)
+  player        Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  author        User     @relation(fields: [authorUserId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model DraftStrategyProfile {
+  id           String   @id @default(cuid())
+  ownerId       String
+  name          String
+  settings      Json
+  owner         Owner    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model IntegrationSource {
+  id        String          @id @default(cuid())
+  type      IntegrationType
+  config    Json
+  isActive  Boolean         @default(true)
+  records   ImportedRecord[]
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+}
+
+model ImportedRecord {
+  id                  String            @id @default(cuid())
+  integrationSourceId String
+  sourceType          IntegrationType
+  recordType          String
+  rawPayload          Json
+  normalizedPayload   Json?
+  importKey           String?
+  integrationSource   IntegrationSource @relation(fields: [integrationSourceId], references: [id], onDelete: Cascade)
+  createdAt           DateTime          @default(now())
+}

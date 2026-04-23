@@ -1,0 +1,41 @@
+{
+  "name": "fantasy-keeper-hq",
+  "private": true,
+  "scripts": {
+    "dev": "NEXT_TEST_WASM_DIR=./node_modules/@next/swc-wasm-nodejs /Users/michaelzoltek/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node ./node_modules/next/dist/bin/next dev",
+    "build": "NEXT_TEST_WASM_DIR=./node_modules/@next/swc-wasm-nodejs /Users/michaelzoltek/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node ./node_modules/next/dist/bin/next build",
+    "start": "/Users/michaelzoltek/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node ./node_modules/next/dist/bin/next start",
+    "lint": "eslint .",
+    "test": "/Users/michaelzoltek/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --test --import tsx tests/**/*.test.ts",
+    "prisma:generate": "/Users/michaelzoltek/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node ./node_modules/prisma/build/index.js generate",
+    "prisma:migrate": "/Users/michaelzoltek/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node ./node_modules/prisma/build/index.js migrate dev",
+    "db:seed": "/Users/michaelzoltek/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node prisma/seed.js",
+    "db:reset": "/Users/michaelzoltek/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node ./node_modules/prisma/build/index.js db push --accept-data-loss && /Users/michaelzoltek/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node prisma/seed.js"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.16.3",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.8.0",
+    "next": "^15.5.15",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@next/swc-wasm-nodejs": "15.5.15",
+    "@types/node": "^25.6.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "autoprefixer": "^10.5.0",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.4",
+    "postcss": "^8.5.10",
+    "prisma": "^6.16.3",
+    "tailwindcss": "^3.4.17",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  }
+}
