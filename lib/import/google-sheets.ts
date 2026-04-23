@@ -327,40 +327,6 @@ function validateKeeperEntries(entries: KeeperSheetEntry[], knownOwnerCodes: Set
   return issues;
 }
 
-async function upsertPlayer(tx: Prisma.TransactionClient, playerName: string, sport: Sport) {
-  const normalizedName = parseSpreadsheetPlayerCell(playerName).normalizedName;
-  const existing = await tx.player.findUnique({ where: { normalizedName } });
-
-  if (existing) {
-    return existing;
-  }
-
-  return tx.player.create({
-    data: {
-      displayName: playerName,
-      normalizedName,
-      sport,
-    },
-  });
-}
-
-async function getOrCreateGoogleImportSource(tx: Prisma.TransactionClient) {
-  return tx.integrationSource.upsert({
-    where: { id: GOOGLE_SHEET_IMPORT_SOURCE_ID },
-    update: {
-      type: IntegrationType.GOOGLE_SHEETS,
-      isActive: true,
-      config: { adapter: "GoogleSheetsImportAdapter" },
-    },
-    create: {
-      id: GOOGLE_SHEET_IMPORT_SOURCE_ID,
-      type: IntegrationType.GOOGLE_SHEETS,
-      isActive: true,
-      config: { adapter: "GoogleSheetsImportAdapter" },
-    },
-  });
-}
-
 export async function importSheetRows(rows: SheetImportRow[]) {
   const source = await prisma.integrationSource.upsert({
     where: {
@@ -497,51 +463,101 @@ export async function syncLeagueFromKeeperGoogleSheet(config: GoogleSheetSourceC
 
     return owner.id;
   });
+  const sourceConfig = {
+    ...config,
+    draftViewSheetName: configuredDraftViewSheetName,
+    lastResolvedDraftViewSheetName: resolvedDraftViewSheetName,
+    picksSheetName: getSheetName(config, "picksSheetName"),
+    lastSyncAt: new Date().toISOString(),
+    lastValidationIssues: validationIssues,
+  };
 
-  await prisma.$transaction(async (tx) => {
-    const source = await tx.integrationSource.upsert({
+  const [, importSource] = await prisma.$transaction([
+    prisma.integrationSource.upsert({
       where: { id: GOOGLE_SHEET_SOURCE_ID },
       update: {
         type: IntegrationType.GOOGLE_SHEETS,
         isActive: true,
-        config: {
-          ...config,
-          draftViewSheetName: configuredDraftViewSheetName,
-          lastResolvedDraftViewSheetName: resolvedDraftViewSheetName,
-          picksSheetName: getSheetName(config, "picksSheetName"),
-          lastSyncAt: new Date().toISOString(),
-          lastValidationIssues: validationIssues,
-        },
+        config: sourceConfig,
       },
       create: {
         id: GOOGLE_SHEET_SOURCE_ID,
         type: IntegrationType.GOOGLE_SHEETS,
         isActive: true,
-        config: {
-          ...config,
-          draftViewSheetName: configuredDraftViewSheetName,
-          lastResolvedDraftViewSheetName: resolvedDraftViewSheetName,
-          picksSheetName: getSheetName(config, "picksSheetName"),
-          lastSyncAt: new Date().toISOString(),
-          lastValidationIssues: validationIssues,
-        },
+        config: sourceConfig,
       },
+    }),
+    prisma.integrationSource.upsert({
+      where: { id: GOOGLE_SHEET_IMPORT_SOURCE_ID },
+      update: {
+        type: IntegrationType.GOOGLE_SHEETS,
+        isActive: true,
+        config: { adapter: "GoogleSheetsImportAdapter" },
+      },
+      create: {
+        id: GOOGLE_SHEET_IMPORT_SOURCE_ID,
+        type: IntegrationType.GOOGLE_SHEETS,
+        isActive: true,
+        config: { adapter: "GoogleSheetsImportAdapter" },
+      },
+    }),
+  ]);
+
+  const rebuiltDraftSlots = buildSnakeDraftOrder(ownerIdsInSheetOrder, totalRounds);
+  const overallPickByRoundAndOwnerId = new Map(
+    rebuiltDraftSlots.map((slot) => [`${slot.round}:${slot.ownerId}`, slot.overallPickNumber]),
+  );
+
+  const normalizedKeeperPlayers = Array.from(
+    new Map(
+      keeperEntries
+        .filter((entry): entry is KeeperSheetEntry & { playerName: string; sport: Sport } => Boolean(entry.playerName && entry.sport))
+        .map((entry) => {
+          const normalizedName = parseSpreadsheetPlayerCell(entry.playerName).normalizedName;
+
+          return [
+            normalizedName,
+            {
+              normalizedName,
+              displayName: entry.playerName,
+              sport: entry.sport,
+            },
+          ];
+        }),
+    ).values(),
+  );
+
+  if (normalizedKeeperPlayers.length > 0) {
+    await prisma.player.createMany({
+      data: normalizedKeeperPlayers,
+      skipDuplicates: true,
     });
+  }
 
-    const importSource = await getOrCreateGoogleImportSource(tx);
-    await tx.keeper.deleteMany();
-    await tx.draftSlot.deleteMany();
+  const playersByNormalizedName = new Map(
+    (
+      normalizedKeeperPlayers.length > 0
+        ? await prisma.player.findMany({
+            where: {
+              normalizedName: {
+                in: normalizedKeeperPlayers.map((player) => player.normalizedName),
+              },
+            },
+          })
+        : []
+    ).map((player) => [player.normalizedName, player]),
+  );
 
-    await tx.leagueSettings.updateMany({
+  await prisma.$transaction([
+    prisma.keeper.deleteMany(),
+    prisma.draftSlot.deleteMany(),
+    prisma.leagueSettings.updateMany({
       data: {
         expectedTotalPlayersPerOwner: totalRounds,
         totalRounds,
       },
-    });
-
-    const rebuiltDraftSlots = buildSnakeDraftOrder(ownerIdsInSheetOrder, totalRounds);
-
-    await tx.draftSlot.createMany({
+    }),
+    prisma.draftSlot.createMany({
       data: rebuiltDraftSlots.map((slot) => ({
         round: slot.round,
         slotNumber: slot.slotNumber,
@@ -549,61 +565,57 @@ export async function syncLeagueFromKeeperGoogleSheet(config: GoogleSheetSourceC
         defaultOwnerId: slot.ownerId,
         currentOwnerId: slot.ownerId,
       })),
+    }),
+  ]);
+
+  const importedRecordsData: Prisma.ImportedRecordCreateManyInput[] = [];
+  const draftSlotUpdateOperations: Prisma.PrismaPromise<unknown>[] = [];
+  const keeperTimestamp = new Date();
+
+  for (const entry of keeperEntries) {
+    const defaultOwner = ownerByName.get(entry.defaultOwnerName);
+    if (!defaultOwner) {
+      continue;
+    }
+
+    const overallPickNumber = overallPickByRoundAndOwnerId.get(`${entry.round}:${defaultOwner.id}`);
+    if (!overallPickNumber) {
+      continue;
+    }
+
+    const currentOwnerId = entry.overrideOwnerCode ? ownerCodeMap.get(entry.overrideOwnerCode) ?? defaultOwner.id : defaultOwner.id;
+
+    importedRecordsData.push({
+      integrationSourceId: importSource.id,
+      sourceType: IntegrationType.GOOGLE_SHEETS,
+      recordType: "keeper_sheet_cell",
+      rawPayload: entry.rawValue,
+      normalizedPayload: entry,
+      importKey: `${entry.round}-${defaultOwner.code}`,
     });
 
-    const slotByRoundAndDefaultOwnerId = new Map(
-      (
-        await tx.draftSlot.findMany({
-          select: {
-            id: true,
-            round: true,
-            defaultOwnerId: true,
+    if (!entry.playerName || !entry.sport) {
+      draftSlotUpdateOperations.push(
+        prisma.draftSlot.update({
+          where: { overallPickNumber },
+          data: {
+            currentOwnerId,
+            overrideOwnerCode: entry.overrideOwnerCode,
           },
-        })
-      ).map((slot) => [`${slot.round}:${slot.defaultOwnerId}`, slot]),
-    );
+        }),
+      );
+      continue;
+    }
 
-    for (const entry of keeperEntries) {
-      const defaultOwner = ownerByName.get(entry.defaultOwnerName);
-      if (!defaultOwner) {
-        continue;
-      }
+    const normalizedName = parseSpreadsheetPlayerCell(entry.playerName).normalizedName;
+    const player = playersByNormalizedName.get(normalizedName);
+    if (!player) {
+      continue;
+    }
 
-      const slot = slotByRoundAndDefaultOwnerId.get(`${entry.round}:${defaultOwner.id}`);
-
-      if (!slot) {
-        continue;
-      }
-
-      const currentOwnerId = entry.overrideOwnerCode ? ownerCodeMap.get(entry.overrideOwnerCode) ?? defaultOwner.id : defaultOwner.id;
-
-      await tx.importedRecord.create({
-        data: {
-          integrationSourceId: importSource.id,
-          sourceType: IntegrationType.GOOGLE_SHEETS,
-          recordType: "keeper_sheet_cell",
-          rawPayload: entry.rawValue,
-          normalizedPayload: entry,
-          importKey: `${entry.round}-${defaultOwner.code}`,
-        },
-      });
-
-      await tx.draftSlot.update({
-        where: { id: slot.id },
-        data: {
-          currentOwnerId,
-          overrideOwnerCode: entry.overrideOwnerCode,
-        },
-      });
-
-      if (!entry.playerName || !entry.sport) {
-        continue;
-      }
-
-      const player = await upsertPlayer(tx, entry.playerName, entry.sport);
-
-      await tx.draftSlot.update({
-        where: { id: slot.id },
+    draftSlotUpdateOperations.push(
+      prisma.draftSlot.update({
+        where: { overallPickNumber },
         data: {
           currentOwnerId,
           overrideOwnerCode: entry.overrideOwnerCode,
@@ -612,39 +624,102 @@ export async function syncLeagueFromKeeperGoogleSheet(config: GoogleSheetSourceC
           selectedSport: entry.sport,
           isKeeper: true,
           originalRawValue: entry.rawValue,
-          selectedAt: new Date(),
+          selectedAt: keeperTimestamp,
         },
-      });
+      }),
+    );
+  }
 
-      await tx.keeper.create({
-        data: {
-          ownerId: currentOwnerId,
-          playerId: player.id,
-          draftSlotId: slot.id,
-          playerName: player.displayName,
-          sport: entry.sport,
-          tag: entry.tag,
-          originalValue: entry.rawValue,
-        },
-      });
+  if (importedRecordsData.length > 0) {
+    await prisma.importedRecord.createMany({
+      data: importedRecordsData,
+    });
+  }
+
+  for (let index = 0; index < draftSlotUpdateOperations.length; index += 25) {
+    await prisma.$transaction(draftSlotUpdateOperations.slice(index, index + 25));
+  }
+
+  const updatedKeeperSlots = await prisma.draftSlot.findMany({
+    where: {
+      isKeeper: true,
+    },
+    select: {
+      id: true,
+      selectedPlayerId: true,
+      selectedPlayerName: true,
+      selectedSport: true,
+      currentOwnerId: true,
+      originalRawValue: true,
+      overallPickNumber: true,
+    },
+  });
+
+  const keeperSlotByPickAndPlayerId = new Map(
+    updatedKeeperSlots
+      .filter((slot): slot is typeof slot & { selectedPlayerId: string; selectedPlayerName: string; selectedSport: Sport } => {
+        return Boolean(slot.selectedPlayerId && slot.selectedPlayerName && slot.selectedSport);
+      })
+      .map((slot) => [`${slot.overallPickNumber}:${slot.selectedPlayerId}`, slot]),
+  );
+
+  const finalizedKeeperRows: Prisma.KeeperCreateManyInput[] = [];
+
+  for (const entry of keeperEntries) {
+    if (!entry.playerName || !entry.sport) {
+      continue;
     }
 
-    const nextOpenSlot = await tx.draftSlot.findFirst({
-      where: { selectedPlayerName: null },
-      orderBy: { overallPickNumber: "asc" },
-    });
+    const defaultOwner = ownerByName.get(entry.defaultOwnerName);
+    if (!defaultOwner) {
+      continue;
+    }
 
-    await tx.leagueSettings.updateMany({
-      data: {
-        expectedTotalPlayersPerOwner: totalRounds,
-        totalRounds,
-        currentDraftPick: nextOpenSlot?.overallPickNumber ?? null,
-        currentDraftRound: nextOpenSlot?.round ?? null,
-      },
+    const overallPickNumber = overallPickByRoundAndOwnerId.get(`${entry.round}:${defaultOwner.id}`);
+    if (!overallPickNumber) {
+      continue;
+    }
+
+    const normalizedName = parseSpreadsheetPlayerCell(entry.playerName).normalizedName;
+    const player = playersByNormalizedName.get(normalizedName);
+    if (!player) {
+      continue;
+    }
+
+    const slot = keeperSlotByPickAndPlayerId.get(`${overallPickNumber}:${player.id}`);
+    if (!slot) {
+      continue;
+    }
+
+    finalizedKeeperRows.push({
+      ownerId: slot.currentOwnerId,
+      playerId: player.id,
+      draftSlotId: slot.id,
+      playerName: player.displayName,
+      sport: entry.sport,
+      tag: entry.tag,
+      originalValue: entry.rawValue,
     });
-  }, {
-    maxWait: 10_000,
-    timeout: 30_000,
+  }
+
+  if (finalizedKeeperRows.length > 0) {
+    await prisma.keeper.createMany({
+      data: finalizedKeeperRows,
+    });
+  }
+
+  const nextOpenSlot = await prisma.draftSlot.findFirst({
+    where: { selectedPlayerName: null },
+    orderBy: { overallPickNumber: "asc" },
+  });
+
+  await prisma.leagueSettings.updateMany({
+    data: {
+      expectedTotalPlayersPerOwner: totalRounds,
+      totalRounds,
+      currentDraftPick: nextOpenSlot?.overallPickNumber ?? null,
+      currentDraftRound: nextOpenSlot?.round ?? null,
+    },
   });
 
   return {
