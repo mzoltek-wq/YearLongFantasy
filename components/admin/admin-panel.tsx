@@ -18,11 +18,24 @@ import { getLeagueSnapshot } from "@/lib/draft/service";
 import { getGoogleSheetSourceConfig } from "@/lib/import/google-sheets";
 import { sportWithEmoji } from "@/lib/utils/format";
 
-export async function AdminPanel() {
+export async function AdminPanel({
+  feedback,
+}: {
+  feedback?: {
+    status?: string;
+    message?: string;
+  };
+}) {
   const [snapshot, googleSheetConfig] = await Promise.all([getLeagueSnapshot(), getGoogleSheetSourceConfig()]);
 
   return (
     <div className="space-y-6">
+      {feedback?.message ? (
+        <Card className={feedback.status === "error" ? "border-rose-200 bg-rose-50" : "border-emerald-200 bg-emerald-50"}>
+          <p className={`text-sm font-medium ${feedback.status === "error" ? "text-rose-900" : "text-emerald-900"}`}>{feedback.message}</p>
+        </Card>
+      ) : null}
+
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <h2 className="text-xl font-semibold">Manage roster limits</h2>

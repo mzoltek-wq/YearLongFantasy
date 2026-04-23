@@ -1,9 +1,7 @@
 "use server";
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { Sport } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
@@ -16,8 +14,6 @@ import {
   syncLeagueFromKeeperGoogleSheet,
 } from "@/lib/import/google-sheets";
 import { normalizePlayerName } from "@/lib/utils/draft";
-
-const execFileAsync = promisify(execFile);
 
 function revalidateAdminViews() {
   ["/admin", "/draft", "/dashboard", "/owners"].forEach((path) => revalidatePath(path));
@@ -148,11 +144,16 @@ export async function importSpreadsheetText(formData: FormData) {
 }
 
 export async function saveKeeperGoogleSheetSource(formData: FormData) {
-  const config = parseGoogleSheetConfigFormData(formData);
+  try {
+    const config = parseGoogleSheetConfigFormData(formData);
 
-  await saveGoogleSheetSourceConfig(config);
+    await saveGoogleSheetSourceConfig(config);
 
-  revalidateAdminViews();
+    revalidateAdminViews();
+    redirect("/admin?status=success&message=Sheet%20config%20saved.");
+  } catch (error) {
+    redirect(`/admin?status=error&message=${encodeURIComponent(error instanceof Error ? error.message : "Could not save sheet config.")}`);
+  }
 }
 
 export async function syncKeeperGoogleSheetSource() {
@@ -167,11 +168,21 @@ export async function syncKeeperGoogleSheetSource() {
 }
 
 export async function syncKeeperGoogleSheetSourceFromForm(formData: FormData) {
-  const config = parseGoogleSheetConfigFormData(formData);
+  try {
+    const config = parseGoogleSheetConfigFormData(formData);
 
-  await saveGoogleSheetSourceConfig(config);
-  await syncLeagueFromKeeperGoogleSheet(config);
-  revalidateAdminViews();
+    const result = await syncLeagueFromKeeperGoogleSheet(config);
+    await saveGoogleSheetSourceConfig(config);
+    revalidateAdminViews();
+
+    redirect(
+      `/admin?status=success&message=${encodeURIComponent(
+        `Sheet sync complete. Imported ${result.importedKeepers} keepers and ${result.importedOverrides} overrides.`,
+      )}`,
+    );
+  } catch (error) {
+    redirect(`/admin?status=error&message=${encodeURIComponent(error instanceof Error ? error.message : "Could not sync Google Sheet source.")}`);
+  }
 }
 
 export async function pushDraftBoardToKeeperGoogleSheet() {
@@ -179,6 +190,13 @@ export async function pushDraftBoardToKeeperGoogleSheet() {
 }
 
 export async function resetDemoData() {
+  if (process.env.VERCEL) {
+    throw new Error("Reset and reseed demo data is disabled in the hosted app.");
+  }
+
+  const [{ execFile }, { promisify }] = await Promise.all([import("node:child_process"), import("node:util")]);
+  const execFileAsync = promisify(execFile);
+
   await execFileAsync("/Users/michaelzoltek/Library/pnpm/pnpm", ["db:seed"], {
     cwd: process.cwd(),
     env: process.env,
