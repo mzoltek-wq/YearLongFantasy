@@ -9,6 +9,8 @@ import { ParsedKeeperTextEntry, parseKeeperText } from "@/lib/keepers/import";
 import { buildSnakeDraftOrder, normalizePlayerName, parseSportFromValue } from "@/lib/utils/draft";
 
 const MANUAL_KEEPER_IMPORT_SOURCE_ID = "manual-keeper-import-source";
+const OWNER_CODE_TOKEN_REGEX = /\(([A-Z]{2})\)/i;
+const KEEPER_TAG_VALUES = new Set(["K1", "K2", "K3", "K4"]);
 
 function revalidateKeeperViews() {
   ["/keepers", "/draft", "/tracker", "/dashboard", "/owners", "/admin"].forEach((path) => revalidatePath(path));
@@ -66,6 +68,10 @@ async function applyKeeperEntry({
     throw new Error(`Could not find ${pickOwner.name}'s pick in round ${entry.round}.`);
   }
 
+  if (slot.currentOwnerId !== owner.id) {
+    throw new Error(`${owner.name} does not currently own ${pickOwner.name}'s round ${entry.round} pick.`);
+  }
+
   const player = await prisma.player.upsert({
     where: { normalizedName: normalizePlayerName(entry.playerName) },
     update: {
@@ -110,6 +116,15 @@ async function applyKeeperEntry({
       },
     }),
   ]);
+}
+
+function getOwnerScopedImportRecordWhere(ownerId: string) {
+  return {
+    recordType: {
+      in: ["keeper_import_issue", "keeper_import_submission", "keeper_import_approval"],
+    },
+    importKey: { startsWith: `keeper-${ownerId}:` },
+  };
 }
 
 export async function updateDraftOrder(formData: FormData) {
@@ -240,10 +255,7 @@ export async function importKeeperText(formData: FormData) {
 
     await prisma.importedRecord.deleteMany({
       where: {
-        recordType: {
-          in: ["keeper_import_issue", "keeper_import_submission", "keeper_import_approval"],
-        },
-        importKey: { startsWith: `keeper-${owner.id}:` },
+        ...getOwnerScopedImportRecordWhere(owner.id),
       },
     });
 
@@ -294,9 +306,12 @@ export async function importKeeperText(formData: FormData) {
       }
       targetKeys.add(targetKey);
 
-      await applyKeeperEntry({ owner, ownerByCode, entry, sport });
-
-      importedCount += 1;
+      try {
+        await applyKeeperEntry({ owner, ownerByCode, entry, sport });
+        importedCount += 1;
+      } catch (error) {
+        issues.push({ entry, reason: error instanceof Error ? error.message : "Could not place this keeper." });
+      }
     }
 
     if (issues.length > 0) {
@@ -405,6 +420,7 @@ export async function resolveKeeperImportIssue(formData: FormData) {
 
   try {
     const issueId = String(formData.get("issueId") ?? "");
+    const action = String(formData.get("issueAction") ?? "resolve");
     const sport = formData.get("sport") as Sport;
     const issue = await prisma.importedRecord.findUnique({
       where: { id: issueId },
@@ -419,44 +435,210 @@ export async function resolveKeeperImportIssue(formData: FormData) {
       entry?: ParsedKeeperTextEntry;
     } | null;
     const ownerId = payload?.ownerId;
-    const entry = payload?.entry;
+    const originalEntry = payload?.entry;
 
-    if (!ownerId || !entry?.playerName) {
-      throw new Error("That unresolved keeper row is missing owner or player details.");
+    if (!ownerId) {
+      throw new Error("That unresolved keeper row is missing owner details.");
     }
 
-    const [owner, ownerCodes] = await Promise.all([
-      prisma.owner.findUnique({ where: { id: ownerId } }),
-      prisma.ownerCode.findMany({ include: { owner: true } }),
-    ]);
-
-    if (!owner) {
-      throw new Error("Could not find the keeper owner.");
-    }
-
-    await applyKeeperEntry({
-      owner,
-      ownerByCode: new Map(ownerCodes.map((code) => [code.code, code.owner])),
-      entry,
-      sport,
-    });
-
-    await prisma.importedRecord.update({
-      where: { id: issue.id },
-      data: {
-        normalizedPayload: {
-          ...(payload ?? {}),
-          status: "resolved",
-          resolvedSport: sport,
-          resolvedAt: new Date().toISOString(),
+    if (action === "ignore") {
+      await prisma.importedRecord.update({
+        where: { id: issue.id },
+        data: {
+          normalizedPayload: {
+            ...(payload ?? {}),
+            status: "ignored",
+            ignoredAt: new Date().toISOString(),
+          },
         },
-      },
-    });
+      });
 
-    revalidateKeeperViews();
-    redirectPath = keeperFeedbackPath("success", `Resolved ${entry.playerName}.`);
+      revalidateKeeperViews();
+      redirectPath = keeperFeedbackPath("success", "Keeper issue ignored.");
+    } else if (!originalEntry?.playerName) {
+      throw new Error("That unresolved keeper row is missing player details.");
+    } else {
+      const [owner, ownerCodes] = await Promise.all([
+        prisma.owner.findUnique({ where: { id: ownerId } }),
+        prisma.ownerCode.findMany({ include: { owner: true } }),
+      ]);
+
+      if (!owner) {
+        throw new Error("Could not find the keeper owner.");
+      }
+
+      const round = Number(formData.get("round") ?? originalEntry.round);
+      const keeperTag = String(formData.get("keeperTag") ?? originalEntry.keeperTag ?? "").trim().toUpperCase();
+      const pickOwnerCode = String(formData.get("pickOwnerCode") ?? originalEntry.pickOwnerCode ?? "").trim().toUpperCase() || null;
+
+      if (!Number.isInteger(round) || round <= 0) {
+        throw new Error("Enter a valid keeper round.");
+      }
+
+      if (!KEEPER_TAG_VALUES.has(keeperTag)) {
+        throw new Error("Keeper status must be K1, K2, K3, or K4.");
+      }
+
+      if (keeperTag === "K4" && round !== 3) {
+        throw new Error("K4 keepers must be placed in round 3.");
+      }
+
+      const entry: ParsedKeeperTextEntry = {
+        ...originalEntry,
+        round,
+        keeperTag,
+        invalidKeeperTags: [],
+        pickOwnerCode,
+      };
+
+      await applyKeeperEntry({
+        owner,
+        ownerByCode: new Map(ownerCodes.map((code) => [code.code, code.owner])),
+        entry,
+        sport,
+      });
+
+      await prisma.importedRecord.update({
+        where: { id: issue.id },
+        data: {
+          normalizedPayload: {
+            ...(payload ?? {}),
+            status: "resolved",
+            resolvedSport: sport,
+            resolvedEntry: entry,
+            resolvedAt: new Date().toISOString(),
+          },
+        },
+      });
+
+      revalidateKeeperViews();
+      redirectPath = keeperFeedbackPath("success", `Resolved ${entry.playerName}.`);
+    }
   } catch (error) {
     redirectPath = keeperFeedbackPath("error", error instanceof Error ? error.message : "Could not resolve keeper row.");
+  }
+
+  redirect(redirectPath);
+}
+
+export async function rejectKeeperSubmission(formData: FormData) {
+  let redirectPath = keeperFeedbackPath("success", "Keeper submission rejected.");
+
+  try {
+    const ownerId = String(formData.get("ownerId") ?? "");
+    const owner = await prisma.owner.findUnique({ where: { id: ownerId } });
+
+    if (!owner) {
+      throw new Error("Choose an owner to reject.");
+    }
+
+    const keepers = await prisma.keeper.findMany({
+      where: { ownerId: owner.id },
+      select: { id: true, draftSlotId: true },
+    });
+    const draftSlotIds = keepers.map((keeper) => keeper.draftSlotId).filter((id): id is string => Boolean(id));
+
+    await prisma.$transaction([
+      prisma.keeper.deleteMany({ where: { ownerId: owner.id } }),
+      prisma.draftSlot.updateMany({
+        where: { id: { in: draftSlotIds } },
+        data: {
+          selectedPlayerId: null,
+          selectedPlayerName: null,
+          selectedSport: null,
+          isKeeper: false,
+          originalRawValue: null,
+          selectedAt: null,
+        },
+      }),
+      prisma.importedRecord.deleteMany({
+        where: {
+          ...getOwnerScopedImportRecordWhere(owner.id),
+        },
+      }),
+    ]);
+
+    revalidateKeeperViews();
+    redirectPath = keeperFeedbackPath("success", `${owner.name}'s keeper import was rejected and cleared.`);
+  } catch (error) {
+    redirectPath = keeperFeedbackPath("error", error instanceof Error ? error.message : "Could not reject keeper submission.");
+  }
+
+  redirect(redirectPath);
+}
+
+export async function importTradedPicksText(formData: FormData) {
+  let redirectPath = keeperFeedbackPath("success", "Traded picks imported.");
+
+  try {
+    const input = String(formData.get("tradedPicksText") ?? "").trim();
+    if (!input) {
+      throw new Error("Paste the traded-pick grid before importing.");
+    }
+
+    const [owners, ownerCodes] = await Promise.all([prisma.owner.findMany(), prisma.ownerCode.findMany({ include: { owner: true } })]);
+    const ownerByName = new Map(owners.map((owner) => [owner.name.toLowerCase(), owner]));
+    const ownerByCode = new Map(ownerCodes.map((code) => [code.code, code.owner]));
+    const rows = input.split(/\r?\n/).map((row) => row.split("\t").map((cell) => cell.trim()));
+    const headerIndex = rows.findIndex((row) => row.filter((cell) => ownerByName.has(cell.toLowerCase())).length >= 2);
+
+    if (headerIndex === -1) {
+      throw new Error("Could not find an owner header row in the pasted traded-pick grid.");
+    }
+
+    const ownerColumns = rows[headerIndex]
+      .map((cell, index) => ({ owner: ownerByName.get(cell.toLowerCase()), index }))
+      .filter((entry): entry is { owner: Owner; index: number } => Boolean(entry.owner));
+
+    let importedCount = 0;
+    const updates: Array<ReturnType<typeof prisma.draftSlot.updateMany>> = [];
+
+    for (let rowIndex = headerIndex + 1; rowIndex < rows.length; rowIndex += 1) {
+      const row = rows[rowIndex];
+      const explicitRound = Number(row[0]);
+      const round = Number.isInteger(explicitRound) && explicitRound > 0 ? explicitRound : rowIndex - headerIndex;
+
+      for (const ownerColumn of ownerColumns) {
+        const rawValue = row[ownerColumn.index] ?? "";
+        const code = rawValue.match(OWNER_CODE_TOKEN_REGEX)?.[1]?.toUpperCase();
+
+        if (!code) {
+          continue;
+        }
+
+        const currentOwner = ownerByCode.get(code);
+        if (!currentOwner) {
+          throw new Error(`Unknown traded-pick owner code "${code}" in round ${round}.`);
+        }
+
+        updates.push(
+          prisma.draftSlot.updateMany({
+            where: {
+              round,
+              defaultOwnerId: ownerColumn.owner.id,
+            },
+            data: {
+              currentOwnerId: currentOwner.id,
+              overrideOwnerCode: code,
+            },
+          }),
+        );
+        importedCount += 1;
+      }
+    }
+
+    if (updates.length === 0) {
+      throw new Error("No traded-pick owner codes were found in the pasted grid.");
+    }
+
+    for (let index = 0; index < updates.length; index += 25) {
+      await prisma.$transaction(updates.slice(index, index + 25));
+    }
+
+    revalidateKeeperViews();
+    redirectPath = keeperFeedbackPath("success", `Imported ${importedCount} traded-pick overrides.`);
+  } catch (error) {
+    redirectPath = keeperFeedbackPath("error", error instanceof Error ? error.message : "Could not import traded picks.");
   }
 
   redirect(redirectPath);

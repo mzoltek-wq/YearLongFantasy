@@ -1,6 +1,13 @@
 import { Sport } from "@prisma/client";
 
-import { approveKeeperSubmission, importKeeperText, importPlayerDatabaseText, resolveKeeperImportIssue } from "@/components/keepers/keeper-actions";
+import {
+  approveKeeperSubmission,
+  importKeeperText,
+  importPlayerDatabaseText,
+  importTradedPicksText,
+  rejectKeeperSubmission,
+  resolveKeeperImportIssue,
+} from "@/components/keepers/keeper-actions";
 import { DraftOrderForm } from "@/components/keepers/draft-order-form";
 import { Card } from "@/components/ui/card";
 import { SPORTS } from "@/lib/constants/league";
@@ -22,6 +29,7 @@ type KeeperIssuePayload = {
     round?: number;
     rawValue?: string;
     playerName?: string | null;
+    sport?: Sport | null;
     keeperTag?: string | null;
     pickOwnerCode?: string | null;
   };
@@ -170,6 +178,20 @@ export async function KeeperWorkspace({
               Import keepers
             </button>
           </form>
+
+          <div className="mt-6 border-t border-[var(--border)] pt-5">
+            <h3 className="text-base font-semibold">Import traded picks</h3>
+            <form action={importTradedPicksText} className="mt-3 space-y-3">
+              <textarea
+                className="min-h-40 w-full rounded-2xl border border-[var(--border)] px-4 py-3 font-mono text-sm"
+                name="tradedPicksText"
+                placeholder={"Matt\tZolt\tMac\tHoff\n\t\t(JR)\n\t\t(RH)"}
+              />
+              <button className="rounded-full border border-[var(--border)] px-5 py-2.5 text-sm font-semibold" type="submit">
+                Import traded picks
+              </button>
+            </form>
+          </div>
         </Card>
 
         <Card>
@@ -220,12 +242,20 @@ export async function KeeperWorkspace({
                     {submission?.submittedAt ? <span className="rounded-full border border-[var(--border)] px-2.5 py-1">Submitted</span> : null}
                   </div>
                   {submission && !isValidated && !isApproved ? (
-                    <form action={approveKeeperSubmission} className="mt-3">
-                      <input name="ownerId" type="hidden" value={owner.id} />
-                      <button className="rounded-full bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-white" type="submit">
-                        Approve
-                      </button>
-                    </form>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <form action={approveKeeperSubmission}>
+                        <input name="ownerId" type="hidden" value={owner.id} />
+                        <button className="rounded-full bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-white" type="submit">
+                          Approve
+                        </button>
+                      </form>
+                      <form action={rejectKeeperSubmission}>
+                        <input name="ownerId" type="hidden" value={owner.id} />
+                        <button className="rounded-full border border-[var(--border)] px-3 py-1.5 text-xs font-semibold" type="submit">
+                          Reject
+                        </button>
+                      </form>
+                    </div>
                   ) : null}
                 </div>
               );
@@ -249,7 +279,7 @@ export async function KeeperWorkspace({
               <div className="rounded-2xl border border-[var(--border)] px-4 py-3 text-sm text-[var(--muted)]">No unresolved keeper rows.</div>
             ) : (
               openIssues.map(({ record, payload }) => (
-                <div className="grid gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 md:grid-cols-[1fr_auto]" key={record.id}>
+                <div className="grid gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3" key={record.id}>
                   <div>
                     <p className="font-semibold">
                       {payload.entry?.playerName ?? payload.entry?.rawValue ?? "Unknown player"}
@@ -258,17 +288,52 @@ export async function KeeperWorkspace({
                     <p className="mt-1 text-sm text-amber-900">{payload.reason ?? "Needs review."}</p>
                     <p className="mt-1 text-xs text-[var(--muted)]">{payload.entry?.rawValue}</p>
                   </div>
-                  <form action={resolveKeeperImportIssue} className="flex flex-wrap items-center gap-2">
+                  <form action={resolveKeeperImportIssue} className="grid gap-2 md:grid-cols-[96px_110px_110px_1fr_auto_auto] md:items-end">
                     <input name="issueId" type="hidden" value={record.id} />
-                    <select className="rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm" name="sport">
+                    <label className="space-y-1">
+                      <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">Round</span>
+                      <input
+                        className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                        defaultValue={payload.entry?.round && payload.entry.round > 0 ? payload.entry.round : ""}
+                        name="round"
+                        type="number"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">Status</span>
+                      <select className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm" defaultValue={payload.entry?.keeperTag ?? "K1"} name="keeperTag">
+                        {["K1", "K2", "K3", "K4"].map((tag) => (
+                          <option key={tag} value={tag}>
+                            {tag}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">Sport</span>
+                      <select className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm" defaultValue={payload.entry?.sport ?? SPORTS[0]} name="sport">
                       {SPORTS.map((sport) => (
                         <option key={sport} value={sport}>
                           {sportWithEmoji(sport)}
                         </option>
                       ))}
-                    </select>
-                    <button className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white" type="submit">
-                      Resolve
+                      </select>
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">Pick owner code</span>
+                      <input
+                        className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm uppercase"
+                        defaultValue={payload.entry?.pickOwnerCode ?? ""}
+                        name="pickOwnerCode"
+                        placeholder="JM"
+                        type="text"
+                      />
+                    </label>
+                    <button className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white" name="issueAction" type="submit" value="resolve">
+                      Apply
+                    </button>
+                    <button className="rounded-full border border-[var(--border)] bg-white px-4 py-2 text-sm font-semibold" name="issueAction" type="submit" value="ignore">
+                      Ignore
                     </button>
                   </form>
                 </div>
