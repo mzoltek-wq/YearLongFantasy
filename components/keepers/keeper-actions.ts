@@ -14,8 +14,8 @@ function revalidateKeeperViews() {
   ["/keepers", "/draft", "/tracker", "/dashboard", "/owners", "/admin"].forEach((path) => revalidatePath(path));
 }
 
-function redirectWithKeeperFeedback(status: "success" | "error", message: string) {
-  redirect(`/keepers?status=${status}&message=${encodeURIComponent(message)}`);
+function keeperFeedbackPath(status: "success" | "error", message: string) {
+  return `/keepers?status=${status}&message=${encodeURIComponent(message)}`;
 }
 
 async function getManualKeeperImportSource() {
@@ -113,6 +113,8 @@ async function applyKeeperEntry({
 }
 
 export async function updateDraftOrder(formData: FormData) {
+  let redirectPath = keeperFeedbackPath("success", "Draft order saved.");
+
   try {
     const order = Array.from({ length: 10 }, (_, index) => String(formData.get(`owner-${index}`) ?? "")).filter(Boolean);
     const uniqueOwnerIds = new Set(order);
@@ -153,13 +155,17 @@ export async function updateDraftOrder(formData: FormData) {
     ]);
 
     revalidateKeeperViews();
-    redirectWithKeeperFeedback("success", `Draft order saved and board reset for ${totalRounds} rounds.`);
+    redirectPath = keeperFeedbackPath("success", `Draft order saved and board reset for ${totalRounds} rounds.`);
   } catch (error) {
-    redirectWithKeeperFeedback("error", error instanceof Error ? error.message : "Could not save draft order.");
+    redirectPath = keeperFeedbackPath("error", error instanceof Error ? error.message : "Could not save draft order.");
   }
+
+  redirect(redirectPath);
 }
 
 export async function importKeeperText(formData: FormData) {
+  let redirectPath = keeperFeedbackPath("success", "Keeper import complete.");
+
   try {
     const ownerId = String(formData.get("ownerId") ?? "");
     const fallbackSport = String(formData.get("fallbackSport") ?? "") as Sport | "";
@@ -272,16 +278,20 @@ export async function importKeeperText(formData: FormData) {
     });
 
     revalidateKeeperViews();
-    redirectWithKeeperFeedback(
+    redirectPath = keeperFeedbackPath(
       issues.length > 0 ? "error" : "success",
       `Imported ${importedCount} keepers for ${owner.name}. ${issues.length} unresolved player${issues.length === 1 ? "" : "s"} need review.`,
     );
   } catch (error) {
-    redirectWithKeeperFeedback("error", error instanceof Error ? error.message : "Could not import keeper text.");
+    redirectPath = keeperFeedbackPath("error", error instanceof Error ? error.message : "Could not import keeper text.");
   }
+
+  redirect(redirectPath);
 }
 
 export async function resolveKeeperImportIssue(formData: FormData) {
+  let redirectPath = keeperFeedbackPath("success", "Keeper row resolved.");
+
   try {
     const issueId = String(formData.get("issueId") ?? "");
     const sport = formData.get("sport") as Sport;
@@ -333,13 +343,17 @@ export async function resolveKeeperImportIssue(formData: FormData) {
     });
 
     revalidateKeeperViews();
-    redirectWithKeeperFeedback("success", `Resolved ${entry.playerName}.`);
+    redirectPath = keeperFeedbackPath("success", `Resolved ${entry.playerName}.`);
   } catch (error) {
-    redirectWithKeeperFeedback("error", error instanceof Error ? error.message : "Could not resolve keeper row.");
+    redirectPath = keeperFeedbackPath("error", error instanceof Error ? error.message : "Could not resolve keeper row.");
   }
+
+  redirect(redirectPath);
 }
 
 export async function importPlayerDatabaseText(formData: FormData) {
+  let redirectPath = keeperFeedbackPath("success", "Player database import complete.");
+
   try {
     const input = String(formData.get("playerDatabaseText") ?? "");
     const rows = input
@@ -381,11 +395,13 @@ export async function importPlayerDatabaseText(formData: FormData) {
     }
 
     revalidateKeeperViews();
-    redirectWithKeeperFeedback(
+    redirectPath = keeperFeedbackPath(
       unresolvedCount > 0 ? "error" : "success",
       `Imported ${importedCount} players into the player database. ${unresolvedCount} row${unresolvedCount === 1 ? "" : "s"} could not be read.`,
     );
   } catch (error) {
-    redirectWithKeeperFeedback("error", error instanceof Error ? error.message : "Could not import player database rows.");
+    redirectPath = keeperFeedbackPath("error", error instanceof Error ? error.message : "Could not import player database rows.");
   }
+
+  redirect(redirectPath);
 }
