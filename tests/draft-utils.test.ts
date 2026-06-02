@@ -66,6 +66,13 @@ Clayton Keller (K1), Tage Thompson (K1) (JR)
   );
 });
 
+test("flags unsupported keeper tags in pasted keeper text", () => {
+  const [entry] = parseKeeperText("20 Jordan Love (K5)");
+
+  assert.equal(entry.keeperTag, null);
+  assert.deepEqual(entry.invalidKeeperTags, ["K5"]);
+});
+
 test("calculates roster totals and validates league totals", () => {
   const owners = [
     { id: "1", name: "Zolt", code: "MZ", createdAt: new Date(), updatedAt: new Date() },

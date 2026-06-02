@@ -135,6 +135,13 @@ export async function updateDraftOrder(formData: FormData) {
     await prisma.$transaction([
       prisma.keeper.deleteMany(),
       prisma.draftSlot.deleteMany(),
+      prisma.importedRecord.deleteMany({
+        where: {
+          recordType: {
+            in: ["keeper_import_issue", "keeper_import_submission", "keeper_import_approval"],
+          },
+        },
+      }),
       prisma.draftSlot.createMany({
         data: slots.map((slot) => ({
           round: slot.round,
@@ -183,7 +190,8 @@ export async function importKeeperText(formData: FormData) {
 
     const ownerCodes = await prisma.ownerCode.findMany({ include: { owner: true } });
     const ownerByCode = new Map(ownerCodes.map((code) => [code.code, code.owner]));
-    const normalizedNames = parsedEntries.filter((entry) => entry.playerName).map((entry) => normalizePlayerName(entry.playerName as string));
+    const parsedPlayerEntries = parsedEntries.filter((entry): entry is ParsedKeeperTextEntry & { playerName: string } => Boolean(entry.playerName));
+    const normalizedNames = parsedPlayerEntries.map((entry) => normalizePlayerName(entry.playerName));
     const existingPlayers = await prisma.player.findMany({
       where: {
         normalizedName: {
@@ -194,20 +202,70 @@ export async function importKeeperText(formData: FormData) {
     const playerByNormalizedName = new Map(existingPlayers.map((player) => [player.normalizedName, player]));
     const source = await getManualKeeperImportSource();
     const targetKeys = new Set<string>();
+    const seenPlayerNames = new Set<string>();
     let importedCount = 0;
     const issues: Array<{ entry: ParsedKeeperTextEntry; reason: string }> = [];
+    const k4Count = parsedPlayerEntries.filter((entry) => entry.keeperTag === "K4").length;
+    const expectedKeeperCount = k4Count > 0 ? 26 : 25;
+
+    if (parsedPlayerEntries.length !== expectedKeeperCount) {
+      issues.push({
+        entry: {
+          round: 0,
+          rawValue: `${parsedPlayerEntries.length} submitted keepers`,
+          playerName: null,
+          sport: null,
+          keeperTag: null,
+          invalidKeeperTags: [],
+          pickOwnerCode: null,
+        },
+        reason: `Expected ${expectedKeeperCount} keepers for ${owner.name}${k4Count > 0 ? " because a K4 was submitted" : ""}, but found ${parsedPlayerEntries.length}.`,
+      });
+    }
+
+    if (k4Count > 1) {
+      issues.push({
+        entry: {
+          round: 0,
+          rawValue: `${k4Count} K4 keepers`,
+          playerName: null,
+          sport: null,
+          keeperTag: null,
+          invalidKeeperTags: [],
+          pickOwnerCode: null,
+        },
+        reason: `${owner.name} can only use one K4 keeper.`,
+      });
+    }
 
     await prisma.importedRecord.deleteMany({
       where: {
-        recordType: "keeper_import_issue",
-        importKey: {
-          startsWith: `keeper-issue:${owner.id}:`,
+        recordType: {
+          in: ["keeper_import_issue", "keeper_import_submission", "keeper_import_approval"],
         },
+        importKey: { startsWith: `keeper-${owner.id}:` },
       },
     });
 
     for (const entry of parsedEntries) {
       if (!entry.playerName) {
+        continue;
+      }
+
+      const normalizedPlayerName = normalizePlayerName(entry.playerName);
+      if (seenPlayerNames.has(normalizedPlayerName)) {
+        issues.push({ entry, reason: `"${entry.playerName}" appears more than once in this keeper submission.` });
+        continue;
+      }
+      seenPlayerNames.add(normalizedPlayerName);
+
+      if (entry.invalidKeeperTags.length > 0) {
+        issues.push({ entry, reason: `Invalid keeper tag ${entry.invalidKeeperTags.join(", ")}. Use K1, K2, K3, or K4.` });
+        continue;
+      }
+
+      if (!entry.keeperTag) {
+        issues.push({ entry, reason: "Missing keeper tag. Use K1, K2, K3, or K4." });
         continue;
       }
 
@@ -253,9 +311,9 @@ export async function importKeeperText(formData: FormData) {
             ownerId: owner.id,
             ownerName: owner.name,
             entry,
-            reason,
-          },
-          importKey: `keeper-issue:${owner.id}:${entry.round}:${normalizePlayerName(entry.playerName ?? entry.rawValue)}`,
+          reason,
+        },
+          importKey: `keeper-${owner.id}:issue:${entry.round}:${normalizePlayerName(entry.playerName ?? entry.rawValue)}`,
         })),
       });
     }
@@ -269,11 +327,11 @@ export async function importKeeperText(formData: FormData) {
         normalizedPayload: {
           ownerId: owner.id,
           ownerName: owner.name,
-          importedCount,
-          issueCount: issues.length,
-          submittedAt: new Date().toISOString(),
-        },
-        importKey: `keeper-submission:${owner.id}:${Date.now()}`,
+        importedCount,
+        issueCount: issues.length,
+        submittedAt: new Date().toISOString(),
+      },
+        importKey: `keeper-${owner.id}:submission:${Date.now()}`,
       },
     });
 
@@ -284,6 +342,59 @@ export async function importKeeperText(formData: FormData) {
     );
   } catch (error) {
     redirectPath = keeperFeedbackPath("error", error instanceof Error ? error.message : "Could not import keeper text.");
+  }
+
+  redirect(redirectPath);
+}
+
+export async function approveKeeperSubmission(formData: FormData) {
+  let redirectPath = keeperFeedbackPath("success", "Keeper submission approved.");
+
+  try {
+    const ownerId = String(formData.get("ownerId") ?? "");
+    const owner = await prisma.owner.findUnique({ where: { id: ownerId } });
+    const source = await getManualKeeperImportSource();
+
+    if (!owner) {
+      throw new Error("Choose an owner to approve.");
+    }
+
+    await prisma.$transaction([
+      prisma.importedRecord.updateMany({
+        where: {
+          recordType: "keeper_import_issue",
+          importKey: { startsWith: `keeper-${owner.id}:` },
+        },
+        data: {
+          normalizedPayload: {
+            status: "approved",
+            ownerId: owner.id,
+            ownerName: owner.name,
+            approvedAt: new Date().toISOString(),
+            reason: "Manually approved by commissioner.",
+          },
+        },
+      }),
+      prisma.importedRecord.create({
+        data: {
+          integrationSourceId: source.id,
+          sourceType: IntegrationType.MANUAL_ENTRY,
+          recordType: "keeper_import_approval",
+          rawPayload: `${owner.name} approved`,
+          normalizedPayload: {
+            ownerId: owner.id,
+            ownerName: owner.name,
+            approvedAt: new Date().toISOString(),
+          },
+          importKey: `keeper-${owner.id}:approval:${Date.now()}`,
+        },
+      }),
+    ]);
+
+    revalidateKeeperViews();
+    redirectPath = keeperFeedbackPath("success", `${owner.name}'s keeper submission was approved.`);
+  } catch (error) {
+    redirectPath = keeperFeedbackPath("error", error instanceof Error ? error.message : "Could not approve keeper submission.");
   }
 
   redirect(redirectPath);

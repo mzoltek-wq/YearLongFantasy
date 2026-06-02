@@ -1,6 +1,6 @@
 import { Sport } from "@prisma/client";
 
-import { importKeeperText, importPlayerDatabaseText, resolveKeeperImportIssue } from "@/components/keepers/keeper-actions";
+import { approveKeeperSubmission, importKeeperText, importPlayerDatabaseText, resolveKeeperImportIssue } from "@/components/keepers/keeper-actions";
 import { DraftOrderForm } from "@/components/keepers/draft-order-form";
 import { Card } from "@/components/ui/card";
 import { SPORTS } from "@/lib/constants/league";
@@ -35,12 +35,22 @@ type KeeperSubmissionPayload = {
   submittedAt?: string;
 };
 
+type KeeperApprovalPayload = {
+  ownerId?: string;
+  ownerName?: string;
+  approvedAt?: string;
+};
+
 function getIssuePayload(value: unknown) {
   return (value ?? {}) as KeeperIssuePayload;
 }
 
 function getSubmissionPayload(value: unknown) {
   return (value ?? {}) as KeeperSubmissionPayload;
+}
+
+function getApprovalPayload(value: unknown) {
+  return (value ?? {}) as KeeperApprovalPayload;
 }
 
 export async function KeeperWorkspace({
@@ -56,7 +66,7 @@ export async function KeeperWorkspace({
     prisma.importedRecord.findMany({
       where: {
         recordType: {
-          in: ["keeper_import_issue", "keeper_import_submission"],
+          in: ["keeper_import_issue", "keeper_import_submission", "keeper_import_approval"],
         },
       },
       orderBy: { createdAt: "desc" },
@@ -75,7 +85,7 @@ export async function KeeperWorkspace({
   const openIssues = importRecords
     .filter((record) => record.recordType === "keeper_import_issue")
     .map((record) => ({ record, payload: getIssuePayload(record.normalizedPayload) }))
-    .filter((issue) => issue.payload.status !== "resolved");
+    .filter((issue) => issue.payload.status === "open");
   const issueCountByOwnerId = openIssues.reduce((counts, issue) => {
     const ownerId = issue.payload.ownerId;
     if (ownerId) {
@@ -85,11 +95,19 @@ export async function KeeperWorkspace({
     return counts;
   }, new Map<string, number>());
   const latestSubmissionByOwnerId = new Map<string, KeeperSubmissionPayload>();
+  const latestApprovalByOwnerId = new Map<string, KeeperApprovalPayload>();
 
   for (const record of importRecords.filter((entry) => entry.recordType === "keeper_import_submission")) {
     const payload = getSubmissionPayload(record.normalizedPayload);
     if (payload.ownerId && !latestSubmissionByOwnerId.has(payload.ownerId)) {
       latestSubmissionByOwnerId.set(payload.ownerId, payload);
+    }
+  }
+
+  for (const record of importRecords.filter((entry) => entry.recordType === "keeper_import_approval")) {
+    const payload = getApprovalPayload(record.normalizedPayload);
+    if (payload.ownerId && !latestApprovalByOwnerId.has(payload.ownerId)) {
+      latestApprovalByOwnerId.set(payload.ownerId, payload);
     }
   }
 
@@ -118,7 +136,7 @@ export async function KeeperWorkspace({
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
         <Card>
-          <h2 className="text-xl font-semibold">Import owner keepers</h2>
+          <h2 className="text-xl font-semibold">Pre-draft imports</h2>
           <form action={importKeeperText} className="mt-4 space-y-4">
             <div className="grid gap-3 md:grid-cols-2">
               <label className="space-y-1">
@@ -157,15 +175,12 @@ export async function KeeperWorkspace({
         <Card>
           <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div>
-              <h2 className="text-xl font-semibold">Post-draft exports</h2>
-              <p className="mt-2 text-sm text-[var(--muted)]">Download spreadsheet-friendly CSV files after the draft.</p>
+              <h2 className="text-xl font-semibold">Pre-draft validation</h2>
+              <p className="mt-2 text-sm text-[var(--muted)]">Track owner submissions, keeper counts, unresolved rows, and commissioner approval.</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <a className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white" href="/api/export">
-                Draft board CSV
-              </a>
-              <a className="rounded-full border border-[var(--border)] px-4 py-2 text-sm font-semibold" href="/api/export?view=rosters">
-                Rosters CSV
+              <a className="rounded-full border border-[var(--border)] px-4 py-2 text-sm font-semibold" href="/api/export">
+                Board CSV
               </a>
             </div>
           </div>
@@ -177,12 +192,18 @@ export async function KeeperWorkspace({
               const expectedKeeperCount = k4Count > 0 ? 26 : 25;
               const openIssueCount = issueCountByOwnerId.get(owner.id) ?? 0;
               const submission = latestSubmissionByOwnerId.get(owner.id);
+              const approval = latestApprovalByOwnerId.get(owner.id);
+              const approvedAt = approval?.approvedAt ? new Date(approval.approvedAt).getTime() : 0;
+              const submittedAt = submission?.submittedAt ? new Date(submission.submittedAt).getTime() : 0;
+              const isApproved = Boolean(approval && approvedAt >= submittedAt);
               const isValidated = Boolean(submission && openIssueCount === 0 && keeperCount === expectedKeeperCount);
               const borderClass = isValidated
                 ? "border-emerald-200 bg-emerald-50"
-                : submission
-                  ? "border-amber-200 bg-amber-50"
-                  : "border-[var(--border)]";
+                : isApproved
+                  ? "border-sky-200 bg-sky-50"
+                  : submission
+                    ? "border-amber-200 bg-amber-50"
+                    : "border-[var(--border)]";
 
               return (
                 <div className={`rounded-2xl border px-4 py-3 ${borderClass}`} key={owner.id}>
@@ -191,13 +212,21 @@ export async function KeeperWorkspace({
                     <p className="text-sm text-[var(--muted)]">{keeperCount}/{expectedKeeperCount}</p>
                   </div>
                   <p className="mt-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
-                    {isValidated ? "Validated" : submission ? "Needs review" : "Not submitted"}
+                    {isValidated ? "Validated" : isApproved ? "Approved" : submission ? "Needs review" : "Not submitted"}
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2 text-xs">
                     <span className="rounded-full border border-[var(--border)] px-2.5 py-1">{openIssueCount} unresolved</span>
                     <span className="rounded-full border border-[var(--border)] px-2.5 py-1">{k4Count} K4</span>
                     {submission?.submittedAt ? <span className="rounded-full border border-[var(--border)] px-2.5 py-1">Submitted</span> : null}
                   </div>
+                  {submission && !isValidated && !isApproved ? (
+                    <form action={approveKeeperSubmission} className="mt-3">
+                      <input name="ownerId" type="hidden" value={owner.id} />
+                      <button className="rounded-full bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-white" type="submit">
+                        Approve
+                      </button>
+                    </form>
+                  ) : null}
                 </div>
               );
             })}
@@ -263,6 +292,23 @@ export async function KeeperWorkspace({
           </form>
         </Card>
       </div>
+
+      <Card>
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold">Post-draft exports</h2>
+            <p className="mt-2 text-sm text-[var(--muted)]">Download Google Sheet-ready CSV files after the draft.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <a className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white" href="/api/export">
+              Draft board CSV
+            </a>
+            <a className="rounded-full border border-[var(--border)] px-4 py-2 text-sm font-semibold" href="/api/export?view=rosters">
+              Rosters CSV
+            </a>
+          </div>
+        </div>
+      </Card>
 
       <Card>
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">

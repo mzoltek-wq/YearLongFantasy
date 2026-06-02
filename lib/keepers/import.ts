@@ -13,6 +13,7 @@ export type ParsedKeeperTextEntry = {
   playerName: string | null;
   sport: Sport | null;
   keeperTag: string | null;
+  invalidKeeperTags: string[];
   pickOwnerCode: string | null;
 };
 
@@ -30,6 +31,7 @@ function splitKeeperValues(value: string) {
 function parseKeeperValue(round: number, rawValue: string): ParsedKeeperTextEntry {
   const tokens = getTokens(rawValue);
   const keeperTag = tokens.find((token) => KEEPER_TAG_REGEX.test(token)) ?? null;
+  const invalidKeeperTags = tokens.filter((token) => /^K\d+$/i.test(token) && !KEEPER_TAG_REGEX.test(token));
   const pickOwnerCode = tokens.find((token) => OWNER_CODE_SET.has(token)) ?? null;
   const playerName = stripPlayerDecorators(rawValue);
 
@@ -39,6 +41,7 @@ function parseKeeperValue(round: number, rawValue: string): ParsedKeeperTextEntr
     playerName: playerName || null,
     sport: parseSportFromValue(rawValue),
     keeperTag,
+    invalidKeeperTags,
     pickOwnerCode,
   };
 }
