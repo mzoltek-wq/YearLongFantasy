@@ -69,7 +69,7 @@ export const SPORT_ALIASES: Record<string, Sport> = {
   "⛳": Sport.GOLF,
 };
 
-export const IGNORED_OWNER_OVERRIDE_TOKENS = new Set(["FT", "K", "K1", "K2", "K3"]);
+export const IGNORED_OWNER_OVERRIDE_TOKENS = new Set(["FT", "K", "K1", "K2", "K3", "K4"]);
 
 export const DEFAULT_ROSTER_LIMITS: Record<Sport, number> = {
   [Sport.HOCKEY]: 4,

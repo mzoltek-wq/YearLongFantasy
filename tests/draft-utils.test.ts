@@ -9,6 +9,7 @@ import {
   parseOwnerOverride,
   parseSpreadsheetPlayerCell,
 } from "@/lib/utils/draft";
+import { parseKeeperText } from "@/lib/keepers/import";
 import { calculateRosterTotals, validateLeagueTotals } from "@/lib/validation/draft";
 
 test("builds snake order correctly", () => {
@@ -22,6 +23,7 @@ test("builds snake order correctly", () => {
 test("parses owner override while ignoring keeper tokens", () => {
   assert.equal(parseOwnerOverride("(ME) ⚾️ Player Name"), "ME");
   assert.equal(parseOwnerOverride("(K2) 🏈 Player Name"), null);
+  assert.equal(parseOwnerOverride("(K4) Player Name"), null);
 });
 
 test("normalizes player names", () => {
@@ -40,6 +42,28 @@ test("parses spreadsheet player cells", () => {
     sport: Sport.HOCKEY,
     overrideOwnerCode: null,
   });
+});
+
+test("parses pasted keeper text by round", () => {
+  const entries = parseKeeperText(`3 Nathan Mackinnon (K4) (CM)
+14
+Clayton Keller (K1), Tage Thompson (K1) (JR)
+69 (CM) Jacob Wilson (K1) (JR)`);
+
+  assert.deepEqual(
+    entries.map((entry) => ({
+      round: entry.round,
+      playerName: entry.playerName,
+      keeperTag: entry.keeperTag,
+      pickOwnerCode: entry.pickOwnerCode,
+    })),
+    [
+      { round: 3, playerName: "Nathan Mackinnon", keeperTag: "K4", pickOwnerCode: "CM" },
+      { round: 14, playerName: "Clayton Keller", keeperTag: "K1", pickOwnerCode: null },
+      { round: 14, playerName: "Tage Thompson", keeperTag: "K1", pickOwnerCode: "JR" },
+      { round: 69, playerName: "Jacob Wilson", keeperTag: "K1", pickOwnerCode: "CM" },
+    ],
+  );
 });
 
 test("calculates roster totals and validates league totals", () => {
