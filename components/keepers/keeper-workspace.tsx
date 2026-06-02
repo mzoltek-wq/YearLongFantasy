@@ -300,6 +300,9 @@ export async function KeeperWorkspace({
             <p className="mt-2 text-sm text-[var(--muted)]">Download Google Sheet-ready CSV files after the draft.</p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <a className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white" href="/api/export?view=keeper-grid">
+              Keeper grid TSV
+            </a>
             <a className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white" href="/api/export">
               Draft board CSV
             </a>
