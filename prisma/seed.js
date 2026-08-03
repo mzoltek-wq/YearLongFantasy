@@ -1,4 +1,20 @@
-const { PrismaClient, Sport, UserRole } = require("@prisma/client");
+const {
+  DraftStatus,
+  FeeSource,
+  InboundMessageSource,
+  InboundMessageStatus,
+  PickChangeSource,
+  PrismaClient,
+  SeasonStatus,
+  Sport,
+  SportLeagueProvider,
+  TradeAssetType,
+  TradeSource,
+  TradeStatus,
+  TransactionFeeType,
+  UserRole,
+  Weekday,
+} = require("@prisma/client");
 
 const prisma = new PrismaClient();
 
@@ -57,6 +73,25 @@ function buildSnakeDraftOrder(ownerIds, rounds) {
 }
 
 async function main() {
+  await prisma.auditLog.deleteMany();
+  await prisma.leagueImportRecord.deleteMany();
+  await prisma.leagueImportBatch.deleteMany();
+  await prisma.transactionFee.deleteMany();
+  await prisma.transactionFeeRule.deleteMany();
+  await prisma.standingsBonusAward.deleteMany();
+  await prisma.standingSnapshot.deleteMany();
+  await prisma.sportLeague.deleteMany();
+  await prisma.pickOwnershipChange.deleteMany();
+  await prisma.inboundMessage.deleteMany();
+  await prisma.tradeAsset.deleteMany();
+  await prisma.trade.deleteMany();
+  await prisma.draftGridSlot.deleteMany();
+  await prisma.draft.deleteMany();
+  await prisma.seasonManager.deleteMany();
+  await prisma.leagueSeason.deleteMany();
+  await prisma.league.deleteMany();
+  await prisma.manager.deleteMany();
+
   await prisma.importedRecord.deleteMany();
   await prisma.integrationSource.deleteMany();
   await prisma.playerNote.deleteMany();
@@ -298,6 +333,221 @@ async function main() {
           FOOTBALL: "cap before round 8",
         },
       },
+    },
+  });
+
+  const managers = [];
+
+  for (const [index, managerName] of OWNER_NAMES.entries()) {
+    const manager = await prisma.manager.create({
+      data: {
+        name: managerName,
+        displayName: managerName,
+        code: OWNER_CODES[managerName],
+        isActive: true,
+        joinedAt: new Date("2018-01-01T12:00:00.000Z"),
+      },
+    });
+
+    managers.push(manager);
+  }
+
+  const league = await prisma.league.create({
+    data: {
+      name: "Year Long Fantasy",
+    },
+  });
+
+  const season = await prisma.leagueSeason.create({
+    data: {
+      leagueId: league.id,
+      year: 2026,
+      name: "2026 Year Long Fantasy",
+      draftYear: 2026,
+      status: SeasonStatus.SETUP,
+      roundCount: 73,
+      managerCount: managers.length,
+      expectedRosterSize: 73,
+    },
+  });
+
+  for (const [index, manager] of managers.entries()) {
+    await prisma.seasonManager.create({
+      data: {
+        seasonId: season.id,
+        managerId: manager.id,
+        slotNumber: index + 1,
+        teamName: manager.displayName,
+        isActive: true,
+      },
+    });
+  }
+
+  const draft = await prisma.draft.create({
+    data: {
+      seasonId: season.id,
+      name: "2026 Main Draft",
+      roundCount: 73,
+      status: DraftStatus.SETUP,
+    },
+  });
+
+  const v2SnakeOrder = buildSnakeDraftOrder(
+    managers.map((manager) => manager.id),
+    73,
+  );
+
+  for (const item of v2SnakeOrder) {
+    await prisma.draftGridSlot.create({
+      data: {
+        draftId: draft.id,
+        seasonId: season.id,
+        round: item.round,
+        slotNumber: item.slotNumber,
+        overallPickNumber: item.overallPickNumber,
+        originalManagerId: item.ownerId,
+        currentManagerId: item.ownerId,
+      },
+    });
+  }
+
+  for (const sport of SPORTS) {
+    await prisma.sportLeague.create({
+      data: {
+        seasonId: season.id,
+        sport,
+        provider: SportLeagueProvider.MANUAL,
+        name: `2026 ${sport.toLowerCase()} league`,
+        standingsBonusEnabled: sport !== Sport.GOLF,
+        standingsBonusCheckDay: sport === Sport.FOOTBALL ? Weekday.TUESDAY : Weekday.MONDAY,
+        standingsBonusCheckTime: "07:00",
+      },
+    });
+  }
+
+  await prisma.transactionFeeRule.createMany({
+    data: [
+      {
+        seasonId: season.id,
+        transactionType: TransactionFeeType.ADD,
+        amount: "1.00",
+        isActive: true,
+      },
+      {
+        seasonId: season.id,
+        transactionType: TransactionFeeType.TRADE,
+        amount: "2.00",
+        isActive: true,
+      },
+    ],
+  });
+
+  const zoltManager = managers.find((manager) => manager.name === "Zolt");
+  const bradManager = managers.find((manager) => manager.name === "Brad");
+  const bradRoundThirteen = await prisma.draftGridSlot.findFirstOrThrow({
+    where: {
+      draftId: draft.id,
+      round: 13,
+      originalManagerId: bradManager.id,
+    },
+  });
+
+  const inboundMessage = await prisma.inboundMessage.create({
+    data: {
+      seasonId: season.id,
+      source: InboundMessageSource.SMS,
+      fromName: "Demo group text",
+      body: "Zolt trades Ben Rice for Brad's 13th round pick.",
+      status: InboundMessageStatus.APPROVED,
+      parsedPayload: {
+        trade: {
+          playerName: "Ben Rice",
+          pick: {
+            draftYear: 2026,
+            round: 13,
+            originalManagerCode: bradManager.code,
+          },
+        },
+      },
+    },
+  });
+
+  const trade = await prisma.trade.create({
+    data: {
+      seasonId: season.id,
+      source: TradeSource.SMS,
+      status: TradeStatus.APPLIED,
+      rawText: inboundMessage.body,
+      notes: "Demo of a text-backed traded pick.",
+    },
+  });
+
+  await prisma.tradeAsset.create({
+    data: {
+      tradeId: trade.id,
+      fromManagerId: bradManager.id,
+      toManagerId: zoltManager.id,
+      assetType: TradeAssetType.DRAFT_PICK,
+      draftYear: 2026,
+      round: 13,
+      originalPickManagerId: bradManager.id,
+      draftGridSlotId: bradRoundThirteen.id,
+      description: "Brad 2026 round 13 pick",
+    },
+  });
+
+  await prisma.tradeAsset.create({
+    data: {
+      tradeId: trade.id,
+      fromManagerId: zoltManager.id,
+      toManagerId: bradManager.id,
+      assetType: TradeAssetType.PLAYER,
+      playerName: "Ben Rice",
+      sport: Sport.BASEBALL,
+      description: "Demo waiver player not present on draft grid.",
+    },
+  });
+
+  await prisma.inboundMessage.update({
+    where: { id: inboundMessage.id },
+    data: {
+      relatedTradeId: trade.id,
+    },
+  });
+
+  await prisma.draftGridSlot.update({
+    where: { id: bradRoundThirteen.id },
+    data: {
+      currentManagerId: zoltManager.id,
+      rawCellValue: `(${zoltManager.code})`,
+    },
+  });
+
+  await prisma.pickOwnershipChange.create({
+    data: {
+      seasonId: season.id,
+      draftGridSlotId: bradRoundThirteen.id,
+      fromManagerId: bradManager.id,
+      toManagerId: zoltManager.id,
+      source: PickChangeSource.SMS,
+      inboundMessageId: inboundMessage.id,
+      relatedTradeId: trade.id,
+      notes: "Demo pick movement linked to the originating text message.",
+      approvedAt: new Date(),
+    },
+  });
+
+  await prisma.transactionFee.create({
+    data: {
+      seasonId: season.id,
+      managerId: zoltManager.id,
+      sport: Sport.BASEBALL,
+      transactionType: TransactionFeeType.TRADE,
+      amount: "2.00",
+      description: "Demo trade fee for Ben Rice pick trade.",
+      relatedTradeId: trade.id,
+      source: FeeSource.SMS,
+      occurredAt: new Date(),
     },
   });
 }

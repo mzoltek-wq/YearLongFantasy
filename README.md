@@ -27,6 +27,17 @@ Fantasy Keeper HQ is a phased full-stack web app for running a multi-sport fanta
 - Private rankings, watchlist, and strategy workspace data model and starter UI
 - Integration source and imported record tracking
 
+## League v2 Foundation
+
+The next-generation league model is being added alongside the original working draft app so pages can be moved over safely. The v2 source of truth is the draft grid, not Google Sheets:
+
+- `Manager`, `League`, `LeagueSeason`, and `SeasonManager` track yearly league participation.
+- `Draft` and `DraftGridSlot` represent the canonical spreadsheet-style grid, including original pick owner, current pick owner, selected player, sport, and keeper status.
+- `PickOwnershipChange`, `Trade`, `TradeAsset`, and `InboundMessage` create the audit trail for manually entered, imported, or SMS-submitted trades.
+- `SportLeague`, `StandingSnapshot`, and `StandingsBonusAward` are ready for focused ESPN/manual standings checks.
+- `TransactionFeeRule` and `TransactionFee` support add/trade fee settings and season fee totals.
+- `/league/2026/grid` is the first read-only v2 page.
+
 ## Local Setup
 
 1. Copy `.env.example` to `.env`.

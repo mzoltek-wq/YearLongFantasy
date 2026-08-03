@@ -8,6 +8,7 @@ const links = [
   { href: "/draft", label: "Draft" },
   { href: "/tracker", label: "Tracker" },
   { href: "/keepers", label: "Keepers" },
+  { href: "/league/2026/grid", label: "League v2" },
   { href: "/dashboard", label: "Dashboard" },
   { href: "/owners", label: "Owners" },
   { href: "/admin", label: "Admin" },

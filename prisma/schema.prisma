@@ -1,11 +1,11 @@
 generator client {
-  provider = "prisma-client-js"
+  provider   = "prisma-client-js"
   engineType = "binary"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
@@ -31,18 +31,156 @@ enum IntegrationType {
   MANUAL_ENTRY
 }
 
+enum SeasonStatus {
+  SETUP
+  PREDRAFT
+  DRAFTING
+  COMPLETE
+  ARCHIVED
+}
+
+enum DraftStatus {
+  SETUP
+  LIVE
+  COMPLETE
+  ARCHIVED
+}
+
+enum DraftSelectionType {
+  OPEN
+  DRAFTED
+  KEEPER
+}
+
+enum KeeperStatus {
+  K1
+  K2
+  K3
+  K4
+}
+
+enum PickChangeSource {
+  MANUAL
+  IMPORT
+  SMS
+  GOOGLE_SHEETS
+}
+
+enum TradeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  APPLIED
+  VOIDED
+}
+
+enum TradeSource {
+  MANUAL
+  SMS
+  IMPORT
+  GOOGLE_SHEETS
+}
+
+enum TradeAssetType {
+  PLAYER
+  DRAFT_PICK
+  FEE
+  OTHER
+}
+
+enum InboundMessageSource {
+  SMS
+  EMAIL
+  MANUAL
+}
+
+enum InboundMessageStatus {
+  PENDING
+  PARSED
+  NEEDS_REVIEW
+  APPROVED
+  IGNORED
+}
+
+enum SportLeagueProvider {
+  ESPN
+  MANUAL
+}
+
+enum Weekday {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum StandingsSnapshotStatus {
+  SUCCESS
+  FAILED
+  MANUAL_OVERRIDE
+}
+
+enum TransactionFeeType {
+  ADD
+  TRADE
+  DROP
+  ADJUSTMENT
+}
+
+enum FeeSource {
+  MANUAL
+  ESPN
+  SMS
+  IMPORT
+}
+
+enum LeagueImportBatchType {
+  KEEPERS
+  TRADED_PICKS
+  DRAFT_HISTORY
+  PLAYERS
+  STANDINGS
+  FEES
+}
+
+enum LeagueImportSource {
+  GOOGLE_SHEETS
+  CSV
+  MANUAL
+  SMS
+  ESPN
+}
+
+enum LeagueImportStatus {
+  PENDING
+  APPLIED
+  REJECTED
+  NEEDS_REVIEW
+}
+
+enum LeagueImportRecordStatus {
+  VALID
+  WARNING
+  ERROR
+  IGNORED
+  APPLIED
+}
+
 model Owner {
-  id            String      @id @default(cuid())
-  name          String      @unique
-  code          String      @unique
-  draftSlots    DraftSlot[] @relation("DraftSlotDefaultOwner")
-  currentSlots  DraftSlot[] @relation("DraftSlotCurrentOwner")
-  keepers       Keeper[]
-  ownerCodes    OwnerCode[]
-  watchlist     WatchlistEntry[]
-  strategies    DraftStrategyProfile[]
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  id           String                 @id @default(cuid())
+  name         String                 @unique
+  code         String                 @unique
+  draftSlots   DraftSlot[]            @relation("DraftSlotDefaultOwner")
+  currentSlots DraftSlot[]            @relation("DraftSlotCurrentOwner")
+  keepers      Keeper[]
+  ownerCodes   OwnerCode[]
+  watchlist    WatchlistEntry[]
+  strategies   DraftStrategyProfile[]
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
 }
 
 model OwnerCode {
@@ -56,43 +194,43 @@ model OwnerCode {
 }
 
 model DraftSlot {
-  id                 String   @id @default(cuid())
+  id                 String    @id @default(cuid())
   round              Int
   slotNumber         Int
-  overallPickNumber  Int      @unique
+  overallPickNumber  Int       @unique
   defaultOwnerId     String
   overrideOwnerCode  String?
   currentOwnerId     String
   selectedPlayerId   String?
   selectedPlayerName String?
   selectedSport      Sport?
-  isKeeper           Boolean  @default(false)
+  isKeeper           Boolean   @default(false)
   originalRawValue   String?
   selectedAt         DateTime?
-  defaultOwner       Owner    @relation("DraftSlotDefaultOwner", fields: [defaultOwnerId], references: [id], onDelete: Cascade)
-  currentOwner       Owner    @relation("DraftSlotCurrentOwner", fields: [currentOwnerId], references: [id], onDelete: Cascade)
-  selectedPlayer     Player?  @relation(fields: [selectedPlayerId], references: [id], onDelete: SetNull)
+  defaultOwner       Owner     @relation("DraftSlotDefaultOwner", fields: [defaultOwnerId], references: [id], onDelete: Cascade)
+  currentOwner       Owner     @relation("DraftSlotCurrentOwner", fields: [currentOwnerId], references: [id], onDelete: Cascade)
+  selectedPlayer     Player?   @relation(fields: [selectedPlayerId], references: [id], onDelete: SetNull)
   keeper             Keeper?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   @@unique([round, slotNumber])
 }
 
 model Keeper {
-  id            String    @id @default(cuid())
+  id            String     @id @default(cuid())
   ownerId       String
   playerId      String?
   playerName    String
   sport         Sport
   tag           String?
-  draftSlotId   String?   @unique
+  draftSlotId   String?    @unique
   originalValue String?
-  owner         Owner     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  player        Player?   @relation(fields: [playerId], references: [id], onDelete: SetNull)
+  owner         Owner      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  player        Player?    @relation(fields: [playerId], references: [id], onDelete: SetNull)
   draftSlot     DraftSlot? @relation(fields: [draftSlotId], references: [id], onDelete: SetNull)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
 }
 
 model RosterLimit {
@@ -125,80 +263,83 @@ model Player {
   watchers       WatchlistEntry[]
   draftedIn      DraftSlot[]
   keepers        Keeper[]
+  draftGridSlots DraftGridSlot[]
+  tradeAssets    TradeAsset[]
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 }
 
 model Ranking {
   id         String   @id @default(cuid())
-  playerId    String
-  source      String
-  rank        Int
-  tier        Int?
-  projection  Float?
-  isPrivate   Boolean  @default(false)
-  player      Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  playerId   String
+  source     String
+  rank       Int
+  tier       Int?
+  projection Float?
+  isPrivate  Boolean  @default(false)
+  player     Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   @@unique([playerId, source, isPrivate])
 }
 
 model User {
-  id        String            @id @default(cuid())
-  email     String            @unique
+  id        String       @id @default(cuid())
+  email     String       @unique
   name      String
   role      UserRole
   notes     PlayerNote[]
-  createdAt DateTime          @default(now())
-  updatedAt DateTime          @updatedAt
+  auditLogs AuditLog[]
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
 }
 
 model WatchlistEntry {
-  id         String   @id @default(cuid())
-  ownerId     String
-  playerId    String
-  isDoNotDraft Boolean @default(false)
+  id           String   @id @default(cuid())
+  ownerId      String
+  playerId     String
+  isDoNotDraft Boolean  @default(false)
   tierOverride Int?
-  notes       String?
-  owner       Owner    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  player      Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  notes        String?
+  owner        Owner    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  player       Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@unique([ownerId, playerId])
 }
 
 model PlayerNote {
   id           String   @id @default(cuid())
-  playerId      String
-  authorUserId  String
-  note          String
-  isPrivate     Boolean  @default(true)
-  player        Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  author        User     @relation(fields: [authorUserId], references: [id], onDelete: Cascade)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  playerId     String
+  authorUserId String
+  note         String
+  isPrivate    Boolean  @default(true)
+  player       Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  author       User     @relation(fields: [authorUserId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 model DraftStrategyProfile {
-  id           String   @id @default(cuid())
-  ownerId       String
-  name          String
-  settings      Json
-  owner         Owner    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id        String   @id @default(cuid())
+  ownerId   String
+  name      String
+  settings  Json
+  owner     Owner    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model IntegrationSource {
-  id        String          @id @default(cuid())
+  id        String           @id @default(cuid())
   type      IntegrationType
   config    Json
-  isActive  Boolean         @default(true)
+  isActive  Boolean          @default(true)
   records   ImportedRecord[]
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
 }
 
 model ImportedRecord {
@@ -211,4 +352,371 @@ model ImportedRecord {
   importKey           String?
   integrationSource   IntegrationSource @relation(fields: [integrationSourceId], references: [id], onDelete: Cascade)
   createdAt           DateTime          @default(now())
+}
+
+model Manager {
+  id                  String                @id @default(cuid())
+  name                String                @unique
+  displayName         String?
+  code                String                @unique
+  phoneNumber         String?
+  email               String?
+  joinedAt            DateTime?
+  leftAt              DateTime?
+  isActive            Boolean               @default(true)
+  notes               String?
+  seasonManagers      SeasonManager[]
+  originalDraftSlots  DraftGridSlot[]       @relation("DraftGridSlotOriginalManager")
+  currentDraftSlots   DraftGridSlot[]       @relation("DraftGridSlotCurrentManager")
+  pickChangesFrom     PickOwnershipChange[] @relation("PickOwnershipChangeFromManager")
+  pickChangesTo       PickOwnershipChange[] @relation("PickOwnershipChangeToManager")
+  tradeAssetsSent     TradeAsset[]          @relation("TradeAssetFromManager")
+  tradeAssetsReceived TradeAsset[]          @relation("TradeAssetToManager")
+  standingSnapshots   StandingSnapshot[]
+  standingsBonuses    StandingsBonusAward[]
+  transactionFees     TransactionFee[]
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+}
+
+model League {
+  id        String         @id @default(cuid())
+  name      String         @unique
+  seasons   LeagueSeason[]
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+}
+
+model LeagueSeason {
+  id                   String                @id @default(cuid())
+  leagueId             String
+  year                 Int
+  name                 String
+  draftYear            Int
+  status               SeasonStatus          @default(SETUP)
+  roundCount           Int                   @default(73)
+  managerCount         Int                   @default(10)
+  expectedRosterSize   Int?
+  league               League                @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  seasonManagers       SeasonManager[]
+  drafts               Draft[]
+  draftGridSlots       DraftGridSlot[]
+  pickOwnershipChanges PickOwnershipChange[]
+  trades               Trade[]
+  inboundMessages      InboundMessage[]
+  sportLeagues         SportLeague[]
+  standingsSnapshots   StandingSnapshot[]
+  standingsBonuses     StandingsBonusAward[]
+  transactionFeeRules  TransactionFeeRule[]
+  transactionFees      TransactionFee[]
+  importBatches        LeagueImportBatch[]
+  auditLogs            AuditLog[]
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  @@unique([leagueId, year])
+}
+
+model SeasonManager {
+  id         String       @id @default(cuid())
+  seasonId   String
+  managerId  String
+  slotNumber Int
+  teamName   String?
+  isActive   Boolean      @default(true)
+  joinedAt   DateTime?
+  leftAt     DateTime?
+  season     LeagueSeason @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  manager    Manager      @relation(fields: [managerId], references: [id], onDelete: Cascade)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  @@unique([seasonId, managerId])
+  @@unique([seasonId, slotNumber])
+}
+
+model Draft {
+  id          String          @id @default(cuid())
+  seasonId    String
+  name        String
+  roundCount  Int             @default(73)
+  status      DraftStatus     @default(SETUP)
+  startedAt   DateTime?
+  completedAt DateTime?
+  season      LeagueSeason    @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  gridSlots   DraftGridSlot[]
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
+
+model DraftGridSlot {
+  id                String                @id @default(cuid())
+  draftId           String
+  seasonId          String
+  round             Int
+  slotNumber        Int
+  overallPickNumber Int
+  originalManagerId String
+  currentManagerId  String
+  playerId          String?
+  playerName        String?
+  sport             Sport?
+  selectionType     DraftSelectionType    @default(OPEN)
+  keeperStatus      KeeperStatus?
+  rawCellValue      String?
+  notes             String?
+  selectedAt        DateTime?
+  draft             Draft                 @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  season            LeagueSeason          @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  originalManager   Manager               @relation("DraftGridSlotOriginalManager", fields: [originalManagerId], references: [id], onDelete: Cascade)
+  currentManager    Manager               @relation("DraftGridSlotCurrentManager", fields: [currentManagerId], references: [id], onDelete: Cascade)
+  player            Player?               @relation(fields: [playerId], references: [id], onDelete: SetNull)
+  pickChanges       PickOwnershipChange[]
+  tradeAssets       TradeAsset[]
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  @@unique([draftId, overallPickNumber])
+  @@unique([draftId, round, slotNumber])
+  @@index([seasonId, round])
+  @@index([currentManagerId])
+  @@index([playerName])
+}
+
+model PickOwnershipChange {
+  id               String           @id @default(cuid())
+  seasonId         String
+  draftGridSlotId  String
+  fromManagerId    String
+  toManagerId      String
+  source           PickChangeSource @default(MANUAL)
+  inboundMessageId String?
+  relatedTradeId   String?
+  notes            String?
+  approvedAt       DateTime?
+  season           LeagueSeason     @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  draftGridSlot    DraftGridSlot    @relation(fields: [draftGridSlotId], references: [id], onDelete: Cascade)
+  fromManager      Manager          @relation("PickOwnershipChangeFromManager", fields: [fromManagerId], references: [id], onDelete: Cascade)
+  toManager        Manager          @relation("PickOwnershipChangeToManager", fields: [toManagerId], references: [id], onDelete: Cascade)
+  inboundMessage   InboundMessage?  @relation(fields: [inboundMessageId], references: [id], onDelete: SetNull)
+  relatedTrade     Trade?           @relation(fields: [relatedTradeId], references: [id], onDelete: SetNull)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([seasonId])
+  @@index([draftGridSlotId])
+}
+
+model Trade {
+  id                   String                @id @default(cuid())
+  seasonId             String
+  tradeDate            DateTime              @default(now())
+  status               TradeStatus           @default(PENDING)
+  source               TradeSource           @default(MANUAL)
+  rawText              String?
+  notes                String?
+  season               LeagueSeason          @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  assets               TradeAsset[]
+  pickOwnershipChanges PickOwnershipChange[]
+  inboundMessages      InboundMessage[]
+  transactionFees      TransactionFee[]
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  @@index([seasonId, tradeDate])
+}
+
+model TradeAsset {
+  id                    String         @id @default(cuid())
+  tradeId               String
+  fromManagerId         String
+  toManagerId           String
+  assetType             TradeAssetType
+  playerId              String?
+  playerName            String?
+  sport                 Sport?
+  draftYear             Int?
+  round                 Int?
+  originalPickManagerId String?
+  draftGridSlotId       String?
+  description           String?
+  trade                 Trade          @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  fromManager           Manager        @relation("TradeAssetFromManager", fields: [fromManagerId], references: [id], onDelete: Cascade)
+  toManager             Manager        @relation("TradeAssetToManager", fields: [toManagerId], references: [id], onDelete: Cascade)
+  player                Player?        @relation(fields: [playerId], references: [id], onDelete: SetNull)
+  draftGridSlot         DraftGridSlot? @relation(fields: [draftGridSlotId], references: [id], onDelete: SetNull)
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  @@index([tradeId])
+  @@index([draftYear, round])
+}
+
+model InboundMessage {
+  id                   String                @id @default(cuid())
+  seasonId             String?
+  source               InboundMessageSource  @default(SMS)
+  provider             String?
+  providerMessageId    String?
+  fromPhone            String?
+  fromName             String?
+  body                 String
+  receivedAt           DateTime              @default(now())
+  status               InboundMessageStatus  @default(PENDING)
+  parsedPayload        Json?
+  relatedTradeId       String?
+  season               LeagueSeason?         @relation(fields: [seasonId], references: [id], onDelete: SetNull)
+  relatedTrade         Trade?                @relation(fields: [relatedTradeId], references: [id], onDelete: SetNull)
+  pickOwnershipChanges PickOwnershipChange[]
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  @@unique([provider, providerMessageId])
+  @@index([seasonId, receivedAt])
+}
+
+model SportLeague {
+  id                      String                @id @default(cuid())
+  seasonId                String
+  sport                   Sport
+  provider                SportLeagueProvider   @default(MANUAL)
+  externalLeagueId        String?
+  name                    String
+  isActive                Boolean               @default(true)
+  standingsBonusEnabled   Boolean               @default(true)
+  standingsBonusCheckDay  Weekday               @default(MONDAY)
+  standingsBonusCheckTime String                @default("07:00")
+  config                  Json?
+  season                  LeagueSeason          @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  standingsSnapshots      StandingSnapshot[]
+  standingsBonuses        StandingsBonusAward[]
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @updatedAt
+
+  @@unique([seasonId, sport])
+}
+
+model StandingSnapshot {
+  id                       String                  @id @default(cuid())
+  seasonId                 String
+  sportLeagueId            String
+  checkedAt                DateTime                @default(now())
+  firstPlaceManagerId      String?
+  firstPlaceExternalTeamId String?
+  weekNumber               Int?
+  standingsJson            Json
+  source                   SportLeagueProvider     @default(MANUAL)
+  status                   StandingsSnapshotStatus @default(SUCCESS)
+  errorMessage             String?
+  season                   LeagueSeason            @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  sportLeague              SportLeague             @relation(fields: [sportLeagueId], references: [id], onDelete: Cascade)
+  firstPlaceManager        Manager?                @relation(fields: [firstPlaceManagerId], references: [id], onDelete: SetNull)
+  bonuses                  StandingsBonusAward[]
+  createdAt                DateTime                @default(now())
+  updatedAt                DateTime                @updatedAt
+
+  @@index([seasonId, checkedAt])
+}
+
+model StandingsBonusAward {
+  id                  String            @id @default(cuid())
+  seasonId            String
+  sportLeagueId       String
+  managerId           String
+  weekNumber          Int
+  points              Int               @default(1)
+  awardedAt           DateTime          @default(now())
+  standingsSnapshotId String?
+  notes               String?
+  season              LeagueSeason      @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  sportLeague         SportLeague       @relation(fields: [sportLeagueId], references: [id], onDelete: Cascade)
+  manager             Manager           @relation(fields: [managerId], references: [id], onDelete: Cascade)
+  standingsSnapshot   StandingSnapshot? @relation(fields: [standingsSnapshotId], references: [id], onDelete: SetNull)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  @@unique([sportLeagueId, weekNumber])
+  @@index([seasonId, managerId])
+}
+
+model TransactionFeeRule {
+  id              String             @id @default(cuid())
+  seasonId        String
+  sport           Sport?
+  transactionType TransactionFeeType
+  amount          Decimal            @db.Decimal(10, 2)
+  isActive        Boolean            @default(true)
+  season          LeagueSeason       @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@unique([seasonId, sport, transactionType])
+}
+
+model TransactionFee {
+  id                           String             @id @default(cuid())
+  seasonId                     String
+  managerId                    String
+  sport                        Sport?
+  transactionType              TransactionFeeType
+  amount                       Decimal            @db.Decimal(10, 2)
+  description                  String
+  relatedTradeId               String?
+  relatedExternalTransactionId String?
+  source                       FeeSource          @default(MANUAL)
+  occurredAt                   DateTime           @default(now())
+  paidAt                       DateTime?
+  notes                        String?
+  season                       LeagueSeason       @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  manager                      Manager            @relation(fields: [managerId], references: [id], onDelete: Cascade)
+  relatedTrade                 Trade?             @relation(fields: [relatedTradeId], references: [id], onDelete: SetNull)
+  createdAt                    DateTime           @default(now())
+  updatedAt                    DateTime           @updatedAt
+
+  @@index([seasonId, managerId])
+}
+
+model LeagueImportBatch {
+  id        String                @id @default(cuid())
+  seasonId  String
+  type      LeagueImportBatchType
+  source    LeagueImportSource
+  status    LeagueImportStatus    @default(PENDING)
+  rawText   String?
+  notes     String?
+  season    LeagueSeason          @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  records   LeagueImportRecord[]
+  createdAt DateTime              @default(now())
+  appliedAt DateTime?
+  updatedAt DateTime              @updatedAt
+}
+
+model LeagueImportRecord {
+  id            String                   @id @default(cuid())
+  batchId       String
+  status        LeagueImportRecordStatus @default(VALID)
+  rowNumber     Int?
+  rawValue      String
+  parsedPayload Json?
+  issueCode     String?
+  issueMessage  String?
+  batch         LeagueImportBatch        @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
+}
+
+model AuditLog {
+  id          String        @id @default(cuid())
+  seasonId    String?
+  actorUserId String?
+  action      String
+  entityType  String
+  entityId    String?
+  before      Json?
+  after       Json?
+  season      LeagueSeason? @relation(fields: [seasonId], references: [id], onDelete: SetNull)
+  actor       User?         @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  createdAt   DateTime      @default(now())
+
+  @@index([seasonId, entityType, entityId])
 }
