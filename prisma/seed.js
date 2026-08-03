@@ -1,3 +1,41 @@
+const fs = require("fs");
+const path = require("path");
+
+function loadEnvFile() {
+  const envPath = path.join(__dirname, "..", ".env");
+
+  if (!fs.existsSync(envPath)) {
+    return;
+  }
+
+  const envText = fs.readFileSync(envPath, "utf8");
+
+  for (const line of envText.split(/\r?\n/)) {
+    const trimmed = line.trim();
+
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    const equalsIndex = trimmed.indexOf("=");
+
+    if (equalsIndex === -1) {
+      continue;
+    }
+
+    const key = trimmed.slice(0, equalsIndex).trim();
+    const rawValue = trimmed.slice(equalsIndex + 1).trim();
+
+    if (!key) {
+      continue;
+    }
+
+    process.env[key] = rawValue.replace(/^["']|["']$/g, "");
+  }
+}
+
+loadEnvFile();
+
 const {
   DraftStatus,
   FeeSource,
@@ -552,11 +590,13 @@ async function main() {
   });
 }
 
-main()
-  .catch((error) => {
-    console.error(error);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+if (require.main === module) {
+  main()
+    .catch((error) => {
+      console.error(error);
+      process.exit(1);
+    })
+    .finally(async () => {
+      await prisma.$disconnect();
+    });
+}
