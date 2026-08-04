@@ -149,7 +149,7 @@ async function main() {
   const tradedPicks = [
     { round: 1, slotNumber: 2, ownerName: "Jimbo", overrideCode: "JB" },
     { round: 2, slotNumber: 8, ownerName: "Zolt", overrideCode: "MZ" },
-    { round: 4, slotNumber: 5, ownerName: "Scared Guys", overrideCode: "SG" },
+    { round: 4, slotNumber: 5, ownerName: "Sandler", overrideCode: "MS" },
     { round: 5, slotNumber: 4, ownerName: "Hoff", overrideCode: "RH" },
   ];
 

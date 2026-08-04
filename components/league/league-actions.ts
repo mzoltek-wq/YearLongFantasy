@@ -45,8 +45,26 @@ export async function importV2TradedPicksText(formData: FormData) {
 
     const draft = season.drafts[0];
     const managers = season.seasonManagers.map((entry) => entry.manager);
-    const managerByName = new Map(managers.map((manager) => [manager.name.trim().toLowerCase(), manager]));
-    const managerByCode = new Map(managers.map((manager) => [manager.code.toUpperCase(), manager]));
+    const managerByName = new Map<string, (typeof managers)[number]>();
+    const managerByCode = new Map<string, (typeof managers)[number]>();
+
+    for (const manager of managers) {
+      managerByName.set(manager.name.trim().toLowerCase(), manager);
+      managerByCode.set(manager.code.toUpperCase(), manager);
+
+      if (manager.displayName) {
+        managerByName.set(manager.displayName.trim().toLowerCase(), manager);
+      }
+    }
+
+    const ownerCodeAliases = await prisma.ownerCode.findMany({ include: { owner: true } });
+
+    for (const alias of ownerCodeAliases) {
+      const matchingManager = managerByName.get(alias.owner.name.trim().toLowerCase());
+      if (matchingManager) {
+        managerByCode.set(alias.code.toUpperCase(), matchingManager);
+      }
+    }
     const rows = input.split(/\r?\n/).map((row) => row.split("\t").map((cell) => cell.trim()));
     const headerIndex = rows.findIndex((row) => row.filter((cell) => managerByName.has(cell.trim().toLowerCase())).length >= 2);
 
