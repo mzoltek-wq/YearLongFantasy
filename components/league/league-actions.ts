@@ -133,6 +133,12 @@ export async function importV2TradedPicksText(formData: FormData) {
         },
       });
       const slotByRoundAndOriginalManager = new Map(slots.map((slot) => [`${slot.round}:${slot.originalManagerId}`, slot]));
+      const appliedPicks: Array<{
+        draftGridSlotId: string;
+        fromManagerId: string;
+        toManagerId: string;
+        rawValue: string;
+      }> = [];
 
       await tx.pickOwnershipChange.deleteMany({
         where: {
@@ -143,17 +149,13 @@ export async function importV2TradedPicksText(formData: FormData) {
         },
       });
 
-      await Promise.all(
-        slots.map((slot) =>
-          tx.draftGridSlot.update({
-            where: { id: slot.id },
-            data: {
-              currentManagerId: slot.originalManagerId,
-              rawCellValue: null,
-            },
-          }),
-        ),
-      );
+      await tx.$executeRaw`
+        UPDATE "DraftGridSlot"
+        SET "currentManagerId" = "originalManagerId",
+            "rawCellValue" = NULL,
+            "updatedAt" = NOW()
+        WHERE "draftId" = ${draft.id}
+      `;
 
       for (const pick of changedPicks) {
         const slot = slotByRoundAndOriginalManager.get(`${pick.round}:${pick.originalManagerId}`);
@@ -174,19 +176,31 @@ export async function importV2TradedPicksText(formData: FormData) {
           },
         });
 
-        await tx.pickOwnershipChange.create({
-          data: {
-            seasonId: season.id,
-            draftGridSlotId: slot.id,
-            fromManagerId: slot.originalManagerId,
-            toManagerId: pick.currentManagerId,
-            source: PickChangeSource.IMPORT,
-            notes: `Imported from pasted ${year} draft grid cell: ${pick.rawValue}`,
-            approvedAt: new Date(),
-          },
+        appliedPicks.push({
+          draftGridSlotId: slot.id,
+          fromManagerId: slot.originalManagerId,
+          toManagerId: pick.currentManagerId,
+          rawValue: pick.rawValue,
         });
         appliedCount += 1;
       }
+
+      if (appliedPicks.length > 0) {
+        await tx.pickOwnershipChange.createMany({
+          data: appliedPicks.map((pick) => ({
+            seasonId: season.id,
+            draftGridSlotId: pick.draftGridSlotId,
+            fromManagerId: pick.fromManagerId,
+            toManagerId: pick.toManagerId,
+            source: PickChangeSource.IMPORT,
+            notes: `Imported from pasted ${year} draft grid cell: ${pick.rawValue}`,
+            approvedAt: new Date(),
+          })),
+        });
+      }
+    }, {
+      maxWait: 10000,
+      timeout: 20000,
     });
 
     revalidatePath(`/league/${year}/grid`);
