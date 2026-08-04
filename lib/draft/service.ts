@@ -115,38 +115,12 @@ async function enforceOwnerSportLimit(
   }
 }
 
-async function ensureDraftIntegrity(tx: Prisma.TransactionClient) {
-  const owners = await tx.owner.findMany();
-  const slots = await tx.draftSlot.findMany();
-  const settings = await tx.leagueSettings.findFirstOrThrow();
-
-  const draftIntegrity = validateDraftIntegrity({
-    owners,
-    slots,
-    expectedTotalPlayersPerOwner: settings.expectedTotalPlayersPerOwner,
-  });
-
-  if (!draftIntegrity.isValid) {
-    const details = draftIntegrity.issues
-      .map(
-        (issue) =>
-          `${issue.ownerName} has ${issue.draftablePickCount} picks and ${issue.keeperCount} keepers ` +
-          `(expected ${issue.expectedDraftablePickCount} picks, total slots ${issue.totalAssignedSlots}/${issue.expectedTotalSlots}).`,
-      )
-      .join(" ");
-
-    throw new Error(`Draft integrity issue: ${details} Re-sync and resolve the mismatch before saving picks.`);
-  }
-}
-
 export async function makeDraftPick(input: {
   overallPickNumber: number;
   playerName: string;
   sport: Sport;
 }) {
   const slot = await prisma.$transaction(async (tx) => {
-    await ensureDraftIntegrity(tx);
-
     const normalizedName = normalizePlayerName(input.playerName);
     const duplicate = await tx.player.findUnique({
       where: { normalizedName },
@@ -205,8 +179,6 @@ export async function updateDraftPick(input: {
   sport: Sport;
 }) {
   const slot = await prisma.$transaction(async (tx) => {
-    await ensureDraftIntegrity(tx);
-
     const slot = await tx.draftSlot.findUnique({
       where: { overallPickNumber: input.overallPickNumber },
     });

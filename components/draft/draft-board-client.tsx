@@ -51,7 +51,6 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner" }: Dra
 
   const currentPick = snapshot.draftWindow.currentPick;
   const nextPick = snapshot.draftWindow.nextPick;
-  const draftLocked = !snapshot.draftIntegrity.isValid;
   const isTrackerMode = mode === "tracker";
   const completedPicks = useMemo(
     () =>
@@ -216,26 +215,12 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner" }: Dra
 
             <button
               className="w-full rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={draftLocked}
+              disabled={!currentPick}
               type="submit"
             >
               Save current pick
             </button>
           </form>
-
-          {draftLocked ? (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4">
-              <p className="text-sm font-semibold text-rose-900">Draft integrity issue</p>
-              <p className="mt-1 text-sm text-rose-800">Pick saving is locked until the sheet is re-synced and these pick counts are resolved.</p>
-              <div className="mt-3 space-y-2">
-                {snapshot.draftIntegrity.issues.map((issue) => (
-                  <div className="rounded-xl bg-white/80 px-3 py-3 text-sm text-rose-900" key={issue.ownerName}>
-                    {issue.ownerName} has {issue.draftablePickCount} picks and {issue.keeperCount} keepers. Expected {issue.expectedDraftablePickCount} picks with {issue.expectedTotalSlots} total roster slots, but currently has {issue.totalAssignedSlots} assigned slots.
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
 
           {message ? <p className="rounded-2xl bg-emerald-100 px-4 py-3 text-sm text-emerald-800">{message}</p> : null}
           {error ? <p className="rounded-2xl bg-rose-100 px-4 py-3 text-sm text-rose-800">{error}</p> : null}

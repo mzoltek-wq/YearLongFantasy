@@ -16,7 +16,7 @@ import {
 import { normalizePlayerName } from "@/lib/utils/draft";
 
 function revalidateAdminViews() {
-  ["/admin", "/draft", "/dashboard", "/owners"].forEach((path) => revalidatePath(path));
+  ["/admin", "/draft", "/dashboard", "/owners", "/keepers", "/tracker"].forEach((path) => revalidatePath(path));
 }
 
 export async function updateRosterLimits(formData: FormData) {
@@ -134,6 +134,61 @@ export async function createOwnerCode(formData: FormData) {
   });
 
   revalidateAdminViews();
+}
+
+export async function updateOwnerName(formData: FormData) {
+  let redirectPath = "/admin?status=success&message=Owner%20updated.";
+
+  try {
+    const ownerId = String(formData.get("ownerId") ?? "");
+    const name = String(formData.get("name") ?? "").trim();
+
+    if (!ownerId || !name) {
+      throw new Error("Owner name is required.");
+    }
+
+    const owner = await prisma.owner.findUnique({
+      where: { id: ownerId },
+    });
+
+    if (!owner) {
+      throw new Error("Owner not found.");
+    }
+
+    const duplicate = await prisma.owner.findFirst({
+      where: {
+        id: { not: owner.id },
+        name,
+      },
+    });
+
+    if (duplicate) {
+      throw new Error(`Another owner is already named ${name}.`);
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.owner.update({
+        where: { id: owner.id },
+        data: { name },
+      });
+
+      await tx.manager.updateMany({
+        where: {
+          OR: [{ code: owner.code }, { name: owner.name }],
+        },
+        data: {
+          name,
+          displayName: name,
+        },
+      });
+    });
+
+    revalidateAdminViews();
+  } catch (error) {
+    redirectPath = `/admin?status=error&message=${encodeURIComponent(error instanceof Error ? error.message : "Could not update owner.")}`;
+  }
+
+  redirect(redirectPath);
 }
 
 export async function importSpreadsheetText(formData: FormData) {

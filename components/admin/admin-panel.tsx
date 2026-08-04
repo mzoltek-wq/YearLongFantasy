@@ -8,6 +8,7 @@ import {
   resetDemoData,
   saveKeeperGoogleSheetSource,
   syncKeeperGoogleSheetSourceFromForm,
+  updateOwnerName,
   updateRosterLimits,
   updateTradedPick,
 } from "@/components/admin/admin-actions";
@@ -191,6 +192,49 @@ export async function AdminPanel({
 
         <Card>
           <h2 className="text-xl font-semibold">Owners and codes</h2>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            Keep exactly 10 active draft owners for the current league. Edit names here, and add alternate codes when history or traded-pick imports need them.
+          </p>
+
+          <div className="mt-4 space-y-3">
+            {snapshot.owners.map((owner) => {
+              const ownerCodes = snapshot.ownerCodes.filter((code) => code.ownerId === owner.id);
+
+              return (
+                <form action={updateOwnerName} className="rounded-2xl border border-[var(--border)] px-4 py-3" key={owner.id}>
+                  <input name="ownerId" type="hidden" value={owner.id} />
+                  <div className="grid gap-3 md:grid-cols-[1fr_auto]">
+                    <div className="space-y-2">
+                      <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]" htmlFor={`owner-name-${owner.id}`}>
+                        Owner name
+                      </label>
+                      <input
+                        className="w-full rounded-xl border border-[var(--border)] px-3 py-2"
+                        defaultValue={owner.name}
+                        id={`owner-name-${owner.id}`}
+                        name="name"
+                        type="text"
+                      />
+                    </div>
+                    <div className="flex items-end">
+                      <button className="rounded-full border border-[var(--border)] px-4 py-2 text-sm font-semibold" type="submit">
+                        Save name
+                      </button>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-sm text-[var(--muted)]">
+                    Codes: {ownerCodes.length > 0 ? ownerCodes.map((code) => code.code).join(", ") : owner.code}
+                  </p>
+                </form>
+              );
+            })}
+          </div>
+
+          <div className="mt-6 border-t border-[var(--border)] pt-4">
+            <p className="text-sm font-semibold">Add owner code</p>
+            <p className="mt-1 text-sm text-[var(--muted)]">Codes are append-only so older draft sheets, trades, and historical initials keep working.</p>
+          </div>
+
           <form action={createOwnerCode} className="mt-4 grid gap-3 md:grid-cols-3">
             <select className="rounded-xl border border-[var(--border)] px-3 py-2" name="ownerId">
               {snapshot.owners.map((owner) => (
@@ -205,20 +249,6 @@ export async function AdminPanel({
               Add owner code
             </button>
           </form>
-
-          <div className="mt-4 grid gap-2 md:grid-cols-2">
-            {snapshot.owners.map((owner) => (
-              <div className="rounded-2xl border border-[var(--border)] px-4 py-3" key={owner.id}>
-                <p className="font-semibold">{owner.name}</p>
-                <p className="text-sm text-[var(--muted)]">
-                  {snapshot.ownerCodes
-                    .filter((code) => code.ownerId === owner.id)
-                    .map((code) => code.code)
-                    .join(", ")}
-                </p>
-              </div>
-            ))}
-          </div>
         </Card>
       </div>
 
