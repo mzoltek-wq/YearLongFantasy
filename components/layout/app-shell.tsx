@@ -6,13 +6,10 @@ import { usePathname } from "next/navigation";
 
 const links = [
   { href: "/draft", label: "Draft" },
-  { href: "/tracker", label: "Tracker" },
-  { href: "/keepers", label: "Keepers" },
-  { href: "/league/2026/grid", label: "League v2" },
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/owners", label: "Owners" },
+  { href: "/league/2026/grid", label: "Draft History" },
+  { href: "/trades", label: "Trades" },
   { href: "/admin", label: "Admin" },
-  { href: "/private", label: "Private" },
+  { href: "/tracker", label: "Tracker" },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -31,7 +28,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <div>
               <h1 className="text-3xl font-semibold tracking-tight">Multi-sport fantasy keeper league control room</h1>
               <p className="max-w-3xl text-sm text-[var(--muted)]">
-                Shared live draft board, commissioner tooling, and private draft workspace in one app.
+                Draft setup, live tracking, trade history, and league administration in one place.
               </p>
             </div>
           </div>
@@ -39,7 +36,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           <nav className="flex flex-wrap gap-2">
             {links.map((link) => (
               <Link
-                className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-4 py-2 text-sm font-medium transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
+                  pathname === link.href || pathname.startsWith(`${link.href}/`)
+                    ? "border-[var(--accent)] bg-[var(--accent)] text-white"
+                    : "border-[var(--border)] bg-[var(--surface)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                }`}
                 href={link.href}
                 key={link.href}
               >

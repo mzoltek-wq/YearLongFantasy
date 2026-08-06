@@ -1,21 +1,14 @@
-import { Sport } from "@prisma/client";
-
 import {
-  createKeeper,
   createOwnerCode,
-  importSpreadsheetText,
   pushDraftBoardToKeeperGoogleSheet,
   resetDemoData,
   saveKeeperGoogleSheetSource,
   syncKeeperGoogleSheetSourceFromForm,
   updateOwnerName,
   updateRosterLimits,
-  updateTradedPick,
 } from "@/components/admin/admin-actions";
 import { SyncSheetForm } from "@/components/admin/sync-sheet-form";
 import { Card } from "@/components/ui/card";
-import { SPORTS } from "@/lib/constants/league";
-import { prisma } from "@/lib/db/prisma";
 import { getLeagueSnapshot } from "@/lib/draft/service";
 import { getGoogleSheetSourceConfig } from "@/lib/import/google-sheets";
 import { sportWithEmoji } from "@/lib/utils/format";
@@ -28,18 +21,7 @@ export async function AdminPanel({
     message?: string;
   };
 }) {
-  const [snapshot, googleSheetConfig, inboundMessages] = await Promise.all([
-    getLeagueSnapshot(),
-    getGoogleSheetSourceConfig(),
-    prisma.inboundMessage.findMany({
-      include: {
-        season: true,
-        relatedTrade: true,
-      },
-      orderBy: { receivedAt: "desc" },
-      take: 12,
-    }),
-  ]);
+  const [snapshot, googleSheetConfig] = await Promise.all([getLeagueSnapshot(), getGoogleSheetSourceConfig()]);
 
   return (
     <div className="space-y-6">
@@ -146,63 +128,6 @@ export async function AdminPanel({
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
-          <h2 className="text-xl font-semibold">Manage traded picks</h2>
-          <form action={updateTradedPick} className="mt-4 grid gap-3 md:grid-cols-4">
-            <input className="rounded-xl border border-[var(--border)] px-3 py-2" name="round" placeholder="Round" type="number" />
-            <input className="rounded-xl border border-[var(--border)] px-3 py-2" name="slotNumber" placeholder="Slot" type="number" />
-            <input className="rounded-xl border border-[var(--border)] px-3 py-2" name="ownerCode" placeholder="Owner code" type="text" />
-            <button className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white" type="submit">
-              Apply override
-            </button>
-          </form>
-
-          <div className="mt-4 space-y-2 text-sm">
-            {snapshot.slots
-              .filter((slot) => slot.overrideOwnerCode)
-              .slice(0, 10)
-              .map((slot) => (
-                <div className="rounded-2xl border border-[var(--border)] px-4 py-3" key={slot.id}>
-                  R{slot.round}.{slot.slotNumber}: {slot.defaultOwner.name} to {slot.currentOwner.name} ({slot.overrideOwnerCode})
-                </div>
-              ))}
-          </div>
-        </Card>
-
-        <Card>
-          <h2 className="text-xl font-semibold">Manage keepers</h2>
-          <form action={createKeeper} className="mt-4 grid gap-3 md:grid-cols-2">
-            <select className="rounded-xl border border-[var(--border)] px-3 py-2" name="ownerId">
-              {snapshot.owners.map((owner) => (
-                <option key={owner.id} value={owner.id}>
-                  {owner.name}
-                </option>
-              ))}
-            </select>
-            <input className="rounded-xl border border-[var(--border)] px-3 py-2" name="round" placeholder="Round" type="number" />
-            <input className="rounded-xl border border-[var(--border)] px-3 py-2 md:col-span-2" name="playerName" placeholder="Player name" type="text" />
-            <select className="rounded-xl border border-[var(--border)] px-3 py-2" name="sport">
-              {SPORTS.map((sport) => (
-                <option key={sport} value={sport}>
-                  {sportWithEmoji(sport)}
-                </option>
-              ))}
-            </select>
-            <input className="rounded-xl border border-[var(--border)] px-3 py-2" name="tag" placeholder="Tag (K1/K2/etc)" type="text" />
-            <button className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white md:col-span-2" type="submit">
-              Add keeper
-            </button>
-          </form>
-
-          <div className="mt-4 space-y-2 text-sm">
-            {snapshot.keepers.map((keeper) => (
-              <div className="rounded-2xl border border-[var(--border)] px-4 py-3" key={keeper.id}>
-                {keeper.playerName} • {keeper.owner.name} • {sportWithEmoji(keeper.sport as Sport)}
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        <Card>
           <h2 className="text-xl font-semibold">Owners and codes</h2>
           <p className="mt-2 text-sm text-[var(--muted)]">
             Keep exactly 10 active draft owners for the current league. Edit names here, and add alternate codes when history or traded-pick imports need them.
@@ -265,47 +190,6 @@ export async function AdminPanel({
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <h2 className="text-xl font-semibold">Trade texts</h2>
-          <p className="mt-2 text-sm text-[var(--muted)]">
-            Incoming SMS trades land here first as raw messages. For now this is a review inbox; parsing and applying trade assets can come next.
-          </p>
-          <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--surface-strong)] px-4 py-3 text-sm text-[var(--muted)]">
-            Twilio webhook URL: <code>https://YOUR_DOMAIN/api/sms/twilio</code>
-          </div>
-          <div className="mt-4 space-y-3">
-            {inboundMessages.length === 0 ? (
-              <p className="rounded-2xl border border-[var(--border)] px-4 py-3 text-sm text-[var(--muted)]">No trade texts have been received yet.</p>
-            ) : (
-              inboundMessages.map((message) => (
-                <div className="rounded-2xl border border-[var(--border)] px-4 py-3" key={message.id}>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-sm font-semibold">{message.fromName ?? message.fromPhone ?? "Unknown sender"}</p>
-                    <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800">{message.status.replaceAll("_", " ")}</span>
-                  </div>
-                  <p className="mt-2 whitespace-pre-wrap text-sm">{message.body}</p>
-                  <p className="mt-2 text-xs text-[var(--muted)]">
-                    {message.season?.year ?? "No season"} • {message.receivedAt.toLocaleString()} {message.relatedTrade ? "• Pending trade created" : ""}
-                  </p>
-                </div>
-              ))
-            )}
-          </div>
-        </Card>
-
-        <Card>
-          <h2 className="text-xl font-semibold">Spreadsheet import</h2>
-          <p className="mt-2 text-sm text-[var(--muted)]">
-            Paste CSV-style rows in the format <code>round,slot,value</code>, for example <code>3,4,(ME) ⚾️ Player Name</code>.
-          </p>
-          <form action={importSpreadsheetText} className="mt-4 space-y-3">
-            <textarea className="min-h-56 w-full rounded-2xl border border-[var(--border)] px-4 py-3" name="importText" placeholder={"1,1,(ME) ⚾️ Player Name\n1,2,🏒 Player Name"} />
-            <button className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white" type="submit">
-              Import rows
-            </button>
-          </form>
-        </Card>
-
         <Card>
           <h2 className="text-xl font-semibold">Export and reset</h2>
           <div className="mt-4 space-y-3">
