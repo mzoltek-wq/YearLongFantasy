@@ -8,6 +8,7 @@ import {
   updateRosterLimits,
 } from "@/components/admin/admin-actions";
 import { SyncSheetForm } from "@/components/admin/sync-sheet-form";
+import { importV2TradedPicksText } from "@/components/league/league-actions";
 import { Card } from "@/components/ui/card";
 import { getLeagueSnapshot } from "@/lib/draft/service";
 import { getGoogleSheetSourceConfig } from "@/lib/import/google-sheets";
@@ -22,6 +23,7 @@ export async function AdminPanel({
   };
 }) {
   const [snapshot, googleSheetConfig] = await Promise.all([getLeagueSnapshot(), getGoogleSheetSourceConfig()]);
+  const currentYear = new Date().getFullYear();
 
   return (
     <div className="space-y-6">
@@ -127,6 +129,57 @@ export async function AdminPanel({
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <h2 className="text-xl font-semibold">Pre-draft imports</h2>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            Temporary preseason workspace for copy/paste imports. Pick ownership import is live; keeper import will plug into the same area once submissions arrive.
+          </p>
+
+          <div className="mt-5 border-t border-[var(--border)] pt-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <h3 className="font-semibold">Import traded pick ownership</h3>
+                <p className="mt-1 text-sm text-[var(--muted)]">
+                  Paste the mostly blank current-year draft grid from Google Sheets. Blank cells reset to the original pick owner; cells like <span className="font-mono">(MZ)</span> move that pick.
+                </p>
+              </div>
+              <a className="rounded-full border border-[var(--border)] px-4 py-2 text-sm font-semibold" href={`/league/${currentYear}/grid`}>
+                View grid
+              </a>
+            </div>
+            <form action={importV2TradedPicksText} className="mt-4 space-y-3">
+              <input name="returnTo" type="hidden" value="admin" />
+              <label className="block space-y-1">
+                <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Draft year</span>
+                <input className="w-full rounded-xl border border-[var(--border)] px-3 py-2" defaultValue={currentYear} name="year" type="number" />
+              </label>
+              <textarea
+                className="min-h-44 w-full rounded-2xl border border-[var(--border)] px-4 py-3 font-mono text-sm"
+                name="tradedPicksText"
+                placeholder={"Matt\tZolt\tMac\tHoff\n\t\t(JR)\n\t\t(RH)\n13\t\t\t(MZ)"}
+              />
+              <button className="rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-white" type="submit">
+                Import pick ownership grid
+              </button>
+            </form>
+          </div>
+
+          <div className="mt-6 border-t border-[var(--border)] pt-4">
+            <h3 className="font-semibold">Import keepers</h3>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              Coming next: paste owner keeper submissions with round, player name, keeper status, and optional owner-code override when the keeper uses a traded pick.
+            </p>
+            <textarea
+              className="mt-3 min-h-32 w-full rounded-2xl border border-dashed border-[var(--border)] bg-[var(--surface-strong)] px-4 py-3 font-mono text-sm text-[var(--muted)]"
+              disabled
+              placeholder={"Example shape:\n3\tNathan MacKinnon (K4) (CM)\n5\tMitch Marner (K1) (CM)\n12\tPaolo Banchero (K3)"}
+            />
+            <p className="mt-2 text-xs text-[var(--muted)]">
+              Keeper import will validate count, duplicate players, K-status, legal round, sport limits, and whether the owner owns an eligible pick in that round.
+            </p>
+          </div>
+        </Card>
+
         <Card>
           <h2 className="text-xl font-semibold">Owners and codes</h2>
           <p className="mt-2 text-sm text-[var(--muted)]">

@@ -12,9 +12,18 @@ function leagueGridFeedbackPath(year: number, status: "success" | "error", messa
   return `/league/${year}/grid?status=${status}&message=${encodeURIComponent(message)}`;
 }
 
+function importFeedbackPath(year: number, status: "success" | "error", message: string, returnTo: string) {
+  if (returnTo === "admin") {
+    return `/admin?status=${status}&message=${encodeURIComponent(message)}`;
+  }
+
+  return leagueGridFeedbackPath(year, status, message);
+}
+
 export async function importV2TradedPicksText(formData: FormData) {
   const year = Number(formData.get("year"));
-  let redirectPath = leagueGridFeedbackPath(Number.isInteger(year) ? year : new Date().getFullYear(), "success", "Traded picks imported.");
+  const returnTo = String(formData.get("returnTo") ?? "");
+  let redirectPath = importFeedbackPath(Number.isInteger(year) ? year : new Date().getFullYear(), "success", "Traded picks imported.", returnTo);
 
   try {
     if (!Number.isInteger(year)) {
@@ -204,12 +213,14 @@ export async function importV2TradedPicksText(formData: FormData) {
     });
 
     revalidatePath(`/league/${year}/grid`);
-    redirectPath = leagueGridFeedbackPath(year, "success", `Imported ${appliedCount} traded-pick overrides for ${year}.`);
+    revalidatePath("/admin");
+    redirectPath = importFeedbackPath(year, "success", `Imported ${appliedCount} traded-pick overrides for ${year}.`, returnTo);
   } catch (error) {
-    redirectPath = leagueGridFeedbackPath(
+    redirectPath = importFeedbackPath(
       Number.isInteger(year) ? year : new Date().getFullYear(),
       "error",
       error instanceof Error ? error.message : "Could not import traded picks.",
+      returnTo,
     );
   }
 

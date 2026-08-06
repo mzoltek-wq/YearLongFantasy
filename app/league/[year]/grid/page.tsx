@@ -1,6 +1,5 @@
 import { notFound } from "next/navigation";
 
-import { importV2TradedPicksText } from "@/components/league/league-actions";
 import { Card } from "@/components/ui/card";
 import { prisma } from "@/lib/db/prisma";
 import { SPORT_EMOJIS, SPORT_LABELS } from "@/lib/constants/league";
@@ -94,32 +93,6 @@ export default async function LeagueGridPage({
             </div>
           </div>
         </div>
-      </Card>
-
-      <Card>
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <h3 className="text-xl font-semibold">Import current draft pick ownership</h3>
-            <p className="mt-2 max-w-3xl text-sm text-[var(--muted)]">
-              Paste the mostly blank current-year draft grid from Google Sheets. Blank cells reset to the original pick owner;
-              cells like <span className="font-mono">(MZ)</span> move that original owner&apos;s pick to the manager code in the cell.
-            </p>
-          </div>
-          <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-strong)] px-4 py-3 text-sm font-semibold">
-            Current import target: {year}
-          </div>
-        </div>
-        <form action={importV2TradedPicksText} className="mt-4 space-y-3">
-          <input name="year" type="hidden" value={year} />
-          <textarea
-            className="min-h-44 w-full rounded-2xl border border-[var(--border)] px-4 py-3 font-mono text-sm"
-            name="tradedPicksText"
-            placeholder={"Matt\tZolt\tMac\tHoff\n\t\t(JR)\n\t\t(RH)\n13\t\t\t(MZ)"}
-          />
-          <button className="rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-white" type="submit">
-            Import pick ownership grid
-          </button>
-        </form>
       </Card>
 
       <div className="overflow-hidden rounded-[2rem] border border-[var(--border)] bg-[var(--surface)] shadow-sm">
