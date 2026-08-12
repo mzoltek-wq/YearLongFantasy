@@ -14,8 +14,6 @@ const SPORTS = ["HOCKEY", "BASEBALL", "FOOTBALL", "BASKETBALL", "GOLF"];
 const FANTASYPROS_BATCH_SPORTS = ["HOCKEY", "BASEBALL", "FOOTBALL", "BASKETBALL"];
 const BOARDS = ["redraft", "dynasty"];
 const DEFAULT_RANKING_LIMIT = 500;
-const FOOTBALL_BATCH_POSITIONS = ["QB", "RB", "WR", "TE"];
-const BATCH_MAX_PAGES = 5;
 const FANTASYPROS_BATCH_DELAY_MS = 900;
 
 const defaultState = {
@@ -161,35 +159,30 @@ const server = createServer(async (request, response) => {
 
       for (const sport of FANTASYPROS_BATCH_SPORTS) {
         for (const boardType of BOARDS) {
-          const positions = getFantasyProsBatchPositions(sport, position);
-          for (const requestPosition of positions) {
-            await delay(FANTASYPROS_BATCH_DELAY_MS);
-            try {
-              const result = await fetchFantasyProsRankingPages({
-                sport,
-                boardType,
-                season,
-                position: requestPosition,
-                limit,
-              });
-              state.players = mergePlayers(state.players, result.players);
-              results.push({
-                sport,
-                boardType,
-                position: requestPosition,
-                imported: result.players.length,
-                pagesFetched: result.pagesFetched,
-                lastPageSize: result.lastPageSize,
-                endpoint: result.endpoint,
-              });
-            } catch (error) {
-              failures.push({
-                sport,
-                boardType,
-                position: requestPosition,
-                error: error instanceof Error ? error.message : "Sync failed.",
-              });
-            }
+          await delay(FANTASYPROS_BATCH_DELAY_MS);
+          try {
+            const result = await fetchFantasyProsRankings({
+              sport,
+              boardType,
+              season,
+              position,
+              limit,
+            });
+            state.players = mergePlayers(state.players, result.players);
+            results.push({
+              sport,
+              boardType,
+              position,
+              imported: result.players.length,
+              endpoint: result.endpoint,
+            });
+          } catch (error) {
+            failures.push({
+              sport,
+              boardType,
+              position,
+              error: error instanceof Error ? error.message : "Sync failed.",
+            });
           }
         }
       }
@@ -524,37 +517,24 @@ function delay(milliseconds) {
   });
 }
 
-function getFantasyProsBatchPositions(sport, requestedPosition) {
-  if (sport === "FOOTBALL" && requestedPosition === "ALL") {
-    return FOOTBALL_BATCH_POSITIONS;
-  }
-
-  return [requestedPosition];
-}
-
-async function fetchFantasyProsRankings({ sport, boardType, season, position, limit = DEFAULT_RANKING_LIMIT, page = 1 }) {
+async function fetchFantasyProsRankings({ sport, boardType, season, position, limit = DEFAULT_RANKING_LIMIT }) {
   const apiKey = process.env.FANTASYPROS_API_KEY;
   if (!apiKey) {
     throw new Error("Set FANTASYPROS_API_KEY before syncing FantasyPros rankings.");
   }
 
-  const sportPath = {
-    FOOTBALL: "nfl",
-    BASEBALL: "mlb",
-    BASKETBALL: "nba",
-    HOCKEY: "nhl",
-    GOLF: "pga",
-  }[sport];
-  const rankingType = boardType === "dynasty" ? "dynasty" : "consensus";
+  const sportPath = getFantasyProsSportPath(sport);
+  const rankingType = getFantasyProsRankingType(boardType);
   const params = new URLSearchParams({
+    ranking_type: rankingType,
     type: rankingType,
-    position,
+    scoring: "HALF",
+    position: position === "ALL" ? "" : position,
     limit: String(limit),
     per_page: String(limit),
-    page: String(page),
-    offset: String((page - 1) * limit),
   });
-  const endpoint = `https://api.fantasypros.com/public/v2/json/${sportPath}/${season}/consensus-rankings?${params.toString()}`;
+  removeBlankSearchParams(params);
+  const endpoint = `https://api.fantasypros.com/public/v2/json/${sportPath}/${season}/rankings?${params.toString()}`;
   const response = await fetch(endpoint, {
     headers: {
       "x-api-key": apiKey,
@@ -570,11 +550,11 @@ async function fetchFantasyProsRankings({ sport, boardType, season, position, li
   const records = findRankingRecords(payload);
   const players = records.map((record, index) =>
     createPlayerRecord({
-      displayName: record.player_name ?? record.playerName ?? record.name ?? record.full_name ?? record.fullName ?? "",
+      displayName: derivePlayerName(record),
       sport,
       boardType,
       source: "FantasyPros",
-      rank: Number(record.rank ?? record.overall_rank ?? record.ecr ?? record.rank_ecr ?? record.rank_ave ?? index + 1),
+      rank: Number(record.rank ?? record.overall_rank ?? record.overallRank ?? record.ecr ?? record.rank_ecr ?? record.rank_ave ?? record.player_rank ?? index + 1),
       position: String(derivePosition(record)),
       team: String(deriveTeam(record)),
       tier: toNullableNumber(record.tier),
@@ -590,36 +570,40 @@ async function fetchFantasyProsRankings({ sport, boardType, season, position, li
   };
 }
 
-async function fetchFantasyProsRankingPages({ sport, boardType, season, position, limit = DEFAULT_RANKING_LIMIT }) {
-  const allPlayers = [];
-  const endpoints = [];
-  const seen = new Set();
-  let lastPageSize = 0;
+function derivePlayerName(record) {
+  return (
+    record.player_name ??
+    record.playerName ??
+    record.player?.player_name ??
+    record.player?.name ??
+    record.player?.full_name ??
+    record.name ??
+    record.full_name ??
+    record.fullName ??
+    ""
+  );
+}
 
-  for (let page = 1; page <= BATCH_MAX_PAGES; page += 1) {
-    const result = await fetchFantasyProsRankings({ sport, boardType, season, position, limit, page });
-    endpoints.push(result.endpoint);
-    lastPageSize = result.players.length;
-    const before = seen.size;
+function getFantasyProsSportPath(sport) {
+  return {
+    FOOTBALL: "nfl",
+    BASEBALL: "mlb",
+    BASKETBALL: "nba",
+    HOCKEY: "nhl",
+    GOLF: "pga",
+  }[sport];
+}
 
-    for (const player of result.players) {
-      if (!seen.has(player.normalizedName)) {
-        seen.add(player.normalizedName);
-        allPlayers.push(player);
-      }
-    }
+function getFantasyProsRankingType(boardType) {
+  return boardType === "dynasty" ? "dynasty" : "draft";
+}
 
-    if (result.players.length === 0 || seen.size === before) {
-      break;
+function removeBlankSearchParams(params) {
+  for (const [key, value] of params.entries()) {
+    if (!value) {
+      params.delete(key);
     }
   }
-
-  return {
-    endpoint: endpoints.join(" | "),
-    players: allPlayers,
-    pagesFetched: endpoints.length,
-    lastPageSize,
-  };
 }
 
 function findRankingRecords(payload) {

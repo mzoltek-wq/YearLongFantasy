@@ -549,11 +549,7 @@ async function syncAllFantasyPros() {
   if (!season) {
     return;
   }
-  const position = prompt("Position for every request? Use ALL if unsure.", "ALL");
-  if (!position) {
-    return;
-  }
-  const confirmed = confirm("This will sync Hockey, Baseball, Basketball, and Football. Football uses QB/RB/WR/TE position requests, and Golf is skipped for now. Continue?");
+  const confirmed = confirm("This will sync Hockey, Baseball, Football, and Basketball across both ranking boards. Golf is skipped for now. Continue?");
   if (!confirmed) {
     return;
   }
@@ -566,7 +562,7 @@ async function syncAllFantasyPros() {
       method: "POST",
       body: JSON.stringify({
         season: Number(season),
-        position,
+        position: "ALL",
       }),
     });
     state = result.state;

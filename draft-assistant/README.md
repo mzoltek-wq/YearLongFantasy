@@ -25,7 +25,7 @@ http://localhost:3100
 - Supports manual watchlist names that are not in rankings yet, such as golfers, prospects, overseas players, or rumor-based stashes.
 - Can sync from FantasyPros when `FANTASYPROS_API_KEY` is set.
 - Can run a one-time FantasyPros batch sync for Hockey, Baseball, Basketball, and Football.
-- Football batch sync uses QB/RB/WR/TE position requests because the FantasyPros NFL endpoint does not accept `ALL`.
+- Uses the documented FantasyPros `/{sport}/{season}/rankings` endpoint for broad player imports.
 - Golf is intentionally skipped in FantasyPros batch sync for now; use manual watchlist or a future OWGR import.
 - Normalizes positions into draft-useful groups: Hockey F/D/G, Baseball C/1B/2B/3B/SS/OF/SP/RP, Football QB/RB/WR/TE/DEF, and Basketball G/F/C.
 - Supports CSV paste/import as a fallback for FantasyPros exports or custom rankings.
@@ -38,4 +38,4 @@ Your API key stays server-side in your terminal environment and is not sent to t
 
 The sport and board tabs show player counts after sync. If a tab says `0`, that board did not return usable players from the latest import.
 
-Batch sync asks for larger pages and gently attempts additional pages, but some FantasyPros plans/endpoints may still cap responses at 10 players. If that happens, use FantasyPros CSV exports or copied ranking tables with the CSV importer to load deeper lists without spending API requests.
+Batch sync asks for larger lists through the documented rankings endpoint. If an endpoint still returns a small result set, use FantasyPros CSV exports or copied ranking tables with the CSV importer to load deeper lists without spending API requests.
