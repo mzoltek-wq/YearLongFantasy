@@ -28,6 +28,7 @@ const elements = {
   csvSourceInput: document.querySelector("#csvSourceInput"),
   importCsvButton: document.querySelector("#importCsvButton"),
   syncFantasyProsButton: document.querySelector("#syncFantasyProsButton"),
+  syncAllFantasyProsButton: document.querySelector("#syncAllFantasyProsButton"),
   manualWatchNameInput: document.querySelector("#manualWatchNameInput"),
   manualWatchPositionInput: document.querySelector("#manualWatchPositionInput"),
   manualWatchTeamInput: document.querySelector("#manualWatchTeamInput"),
@@ -75,6 +76,7 @@ function bindEvents() {
   });
   elements.importCsvButton.addEventListener("click", importCsv);
   elements.syncFantasyProsButton.addEventListener("click", syncFantasyPros);
+  elements.syncAllFantasyProsButton.addEventListener("click", syncAllFantasyPros);
   elements.addManualWatchButton.addEventListener("click", addManualWatchlistPlayer);
 }
 
@@ -264,8 +266,10 @@ function renderSidebars() {
   }
 
   elements.recentSyncs.innerHTML = "";
-  for (const sync of state.syncs.slice(0, 6)) {
-    elements.recentSyncs.append(miniItem(`${sync.source} ${sync.sport}`, `${sync.boardType ?? ""} • ${sync.imported} players • ${new Date(sync.at).toLocaleString()}`));
+  for (const sync of state.syncs.slice(0, 12)) {
+    const failureText = sync.failures?.length ? ` • ${sync.failures.length} failed` : "";
+    const requestText = sync.requestCount ? ` • ${sync.requestCount} requests` : "";
+    elements.recentSyncs.append(miniItem(`${sync.source} ${sync.sport}`, `${sync.boardType ?? ""} • ${sync.imported} players${requestText}${failureText} • ${new Date(sync.at).toLocaleString()}`));
   }
 }
 
@@ -400,6 +404,43 @@ async function syncFantasyPros() {
     render();
   } catch (error) {
     alert(error.message);
+  }
+}
+
+async function syncAllFantasyPros() {
+  const season = prompt("FantasyPros season/year for every sport and board?", String(new Date().getFullYear()));
+  if (!season) {
+    return;
+  }
+  const position = prompt("Position for every request? Use ALL if unsure.", "ALL");
+  if (!position) {
+    return;
+  }
+  const confirmed = confirm("This will request 5 sports x 2 boards = 10 FantasyPros API calls. Continue?");
+  if (!confirmed) {
+    return;
+  }
+
+  elements.syncAllFantasyProsButton.disabled = true;
+  elements.syncAllFantasyProsButton.textContent = "Syncing 10 boards...";
+
+  try {
+    const result = await requestJson("/api/sync/fantasypros/all", {
+      method: "POST",
+      body: JSON.stringify({
+        season: Number(season),
+        position,
+      }),
+    });
+    state = result.state;
+    render();
+    const imported = result.results.reduce((total, entry) => total + entry.imported, 0);
+    alert(`FantasyPros batch sync complete. Imported ${imported} players. Failures: ${result.failures.length}.`);
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    elements.syncAllFantasyProsButton.disabled = false;
+    elements.syncAllFantasyProsButton.textContent = "Sync all FantasyPros boards once";
   }
 }
 

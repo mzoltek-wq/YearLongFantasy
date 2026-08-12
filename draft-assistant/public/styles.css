@@ -106,6 +106,16 @@ button.secondary {
   color: var(--ink);
 }
 
+.button.danger,
+button.danger {
+  background: var(--rose);
+}
+
+.button.danger:hover,
+button.danger:hover {
+  background: #873827;
+}
+
 .button.full {
   width: 100%;
 }

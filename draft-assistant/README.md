@@ -24,6 +24,7 @@ http://localhost:3100
 - Supports `redraft` and `dynasty` ranking boards.
 - Supports manual watchlist names that are not in rankings yet, such as golfers, prospects, overseas players, or rumor-based stashes.
 - Can sync from FantasyPros when `FANTASYPROS_API_KEY` is set.
+- Can run a one-time FantasyPros batch sync for all 5 sports and both ranking boards. This uses 10 API requests.
 - Supports CSV paste/import as a fallback for FantasyPros exports or custom rankings.
 
 ## FantasyPros Sync

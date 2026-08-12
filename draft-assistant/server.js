@@ -144,6 +144,50 @@ const server = createServer(async (request, response) => {
       return json(response, { imported: result.players.length, endpoint: result.endpoint, state });
     }
 
+    if (request.method === "POST" && url.pathname === "/api/sync/fantasypros/all") {
+      const payload = await readJson(request);
+      const season = Number(payload.season ?? new Date().getFullYear());
+      const position = String(payload.position ?? "ALL").toUpperCase();
+      const state = await loadState();
+      const results = [];
+      const failures = [];
+
+      for (const sport of SPORTS) {
+        for (const boardType of BOARDS) {
+          try {
+            const result = await fetchFantasyProsRankings({ sport, boardType, season, position });
+            state.players = mergePlayers(state.players, result.players);
+            results.push({
+              sport,
+              boardType,
+              imported: result.players.length,
+              endpoint: result.endpoint,
+            });
+          } catch (error) {
+            failures.push({
+              sport,
+              boardType,
+              error: error instanceof Error ? error.message : "Sync failed.",
+            });
+          }
+        }
+      }
+
+      state.syncs.unshift({
+        source: "FantasyPros batch",
+        sport: "ALL",
+        boardType: "all",
+        imported: results.reduce((total, result) => total + result.imported, 0),
+        requestCount: SPORTS.length * BOARDS.length,
+        results,
+        failures,
+        at: new Date().toISOString(),
+      });
+
+      await saveState(state);
+      return json(response, { results, failures, state });
+    }
+
     json(response, { error: "Not found" }, 404);
   } catch (error) {
     json(response, { error: error instanceof Error ? error.message : "Unexpected error" }, 500);
