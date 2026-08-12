@@ -15,6 +15,8 @@ const FANTASYPROS_BATCH_SPORTS = ["HOCKEY", "BASEBALL", "FOOTBALL", "BASKETBALL"
 const BOARDS = ["redraft", "dynasty"];
 const DEFAULT_RANKING_LIMIT = 500;
 const FOOTBALL_BATCH_POSITIONS = ["QB", "RB", "WR", "TE"];
+const BATCH_MAX_PAGES = 5;
+const FANTASYPROS_BATCH_DELAY_MS = 900;
 
 const defaultState = {
   players: [],
@@ -161,8 +163,9 @@ const server = createServer(async (request, response) => {
         for (const boardType of BOARDS) {
           const positions = getFantasyProsBatchPositions(sport, position);
           for (const requestPosition of positions) {
+            await delay(FANTASYPROS_BATCH_DELAY_MS);
             try {
-              const result = await fetchFantasyProsRankings({
+              const result = await fetchFantasyProsRankingPages({
                 sport,
                 boardType,
                 season,
@@ -175,6 +178,8 @@ const server = createServer(async (request, response) => {
                 boardType,
                 position: requestPosition,
                 imported: result.players.length,
+                pagesFetched: result.pagesFetched,
+                lastPageSize: result.lastPageSize,
                 endpoint: result.endpoint,
               });
             } catch (error) {
@@ -252,7 +257,7 @@ function normalizeState(state) {
   return {
     ...defaultState,
     ...state,
-    players: Array.isArray(state?.players) ? state.players : [],
+    players: Array.isArray(state?.players) ? state.players.map(normalizePlayerRecord) : [],
     roster: Array.isArray(state?.roster) ? state.roster : [],
     notes: state?.notes && typeof state.notes === "object" ? state.notes : {},
     watchlist: Array.isArray(state?.watchlist) ? state.watchlist : [],
@@ -271,6 +276,23 @@ function normalizeState(state) {
         ...(state?.settings?.strategy ?? {}),
       },
     },
+  };
+}
+
+function normalizePlayerRecord(player) {
+  if (!player || typeof player !== "object") {
+    return player;
+  }
+
+  const sport = normalizeSport(player.sport);
+  const position = String(player.position ?? derivePosition(player.raw) ?? "").trim() || null;
+  return {
+    ...player,
+    sport,
+    boardType: normalizeBoardType(player.boardType),
+    position,
+    team: player.team ?? deriveTeam(player.raw),
+    positionGroup: player.positionGroup ?? normalizePositionGroup(sport, position),
   };
 }
 
@@ -385,6 +407,8 @@ function toNullableNumber(value) {
 
 function createPlayerRecord(input) {
   const normalizedName = normalizeName(input.displayName);
+  const position = String(input.position ?? derivePosition(input.raw) ?? "").trim();
+  const team = String(input.team ?? deriveTeam(input.raw) ?? "").trim();
   return {
     id: `${input.sport}:${input.boardType}:${normalizedName}`,
     normalizedName,
@@ -393,8 +417,9 @@ function createPlayerRecord(input) {
     boardType: input.boardType,
     source: input.source,
     rank: input.rank,
-    position: input.position || null,
-    team: input.team || null,
+    position: position || null,
+    positionGroup: normalizePositionGroup(input.sport, position),
+    team: team || null,
     tier: input.tier ?? null,
     injuryStatus: input.injuryStatus || null,
     upsideNote: input.upsideNote || null,
@@ -424,6 +449,81 @@ function mergePlayers(existingPlayers, incomingPlayers) {
   return Array.from(byKey.values()).sort((left, right) => (left.rank ?? 9999) - (right.rank ?? 9999));
 }
 
+function normalizePositionGroup(sport, position) {
+  const value = String(position ?? "").toUpperCase();
+  const firstPosition = value.split(",").map((entry) => entry.trim()).find(Boolean) ?? "";
+
+  if (sport === "HOCKEY") {
+    if (["C", "LW", "RW", "W", "F"].includes(firstPosition)) {
+      return "F";
+    }
+    if (["D", "DEF"].includes(firstPosition)) {
+      return "D";
+    }
+    if (["G", "GK"].includes(firstPosition)) {
+      return "G";
+    }
+  }
+
+  if (sport === "BASKETBALL") {
+    if (["PG", "SG", "G"].includes(firstPosition)) {
+      return "G";
+    }
+    if (["SF", "PF", "F"].includes(firstPosition)) {
+      return "F";
+    }
+    if (firstPosition === "C") {
+      return "C";
+    }
+  }
+
+  if (sport === "FOOTBALL") {
+    if (["QB", "RB", "WR", "TE", "DST", "DEF"].includes(firstPosition)) {
+      return firstPosition === "DST" ? "DEF" : firstPosition;
+    }
+  }
+
+  if (sport === "BASEBALL") {
+    if (["LF", "CF", "RF"].includes(firstPosition)) {
+      return "OF";
+    }
+    if (["C", "1B", "2B", "3B", "SS", "OF", "SP", "RP"].includes(firstPosition)) {
+      return firstPosition;
+    }
+    if (firstPosition === "DH") {
+      return "1B";
+    }
+  }
+
+  return firstPosition || null;
+}
+
+function derivePosition(raw) {
+  return (
+    raw?.position ??
+    raw?.pos ??
+    raw?.player_position_id ??
+    raw?.primary_position ??
+    raw?.position_id ??
+    raw?.player_positions ??
+    raw?.player_eligibility ??
+    raw?.player_espn_positions ??
+    raw?.player_yahoo_positions ??
+    raw?.player_cbs_positions ??
+    ""
+  );
+}
+
+function deriveTeam(raw) {
+  return raw?.team ?? raw?.team_abbr ?? raw?.teamAbbr ?? raw?.player_team_id ?? "";
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+}
+
 function getFantasyProsBatchPositions(sport, requestedPosition) {
   if (sport === "FOOTBALL" && requestedPosition === "ALL") {
     return FOOTBALL_BATCH_POSITIONS;
@@ -432,7 +532,7 @@ function getFantasyProsBatchPositions(sport, requestedPosition) {
   return [requestedPosition];
 }
 
-async function fetchFantasyProsRankings({ sport, boardType, season, position, limit = DEFAULT_RANKING_LIMIT }) {
+async function fetchFantasyProsRankings({ sport, boardType, season, position, limit = DEFAULT_RANKING_LIMIT, page = 1 }) {
   const apiKey = process.env.FANTASYPROS_API_KEY;
   if (!apiKey) {
     throw new Error("Set FANTASYPROS_API_KEY before syncing FantasyPros rankings.");
@@ -451,7 +551,8 @@ async function fetchFantasyProsRankings({ sport, boardType, season, position, li
     position,
     limit: String(limit),
     per_page: String(limit),
-    page: "1",
+    page: String(page),
+    offset: String((page - 1) * limit),
   });
   const endpoint = `https://api.fantasypros.com/public/v2/json/${sportPath}/${season}/consensus-rankings?${params.toString()}`;
   const response = await fetch(endpoint, {
@@ -474,8 +575,8 @@ async function fetchFantasyProsRankings({ sport, boardType, season, position, li
       boardType,
       source: "FantasyPros",
       rank: Number(record.rank ?? record.overall_rank ?? record.ecr ?? record.rank_ecr ?? record.rank_ave ?? index + 1),
-      position: String(record.position ?? record.pos ?? record.player_position_id ?? record.primary_position ?? record.player_positions ?? ""),
-      team: String(record.team ?? record.team_abbr ?? record.teamAbbr ?? record.player_team_id ?? ""),
+      position: String(derivePosition(record)),
+      team: String(deriveTeam(record)),
       tier: toNullableNumber(record.tier),
       injuryStatus: String(record.injury_status ?? record.injuryStatus ?? record.status ?? ""),
       upsideNote: String(record.notes ?? record.outlook ?? ""),
@@ -486,6 +587,38 @@ async function fetchFantasyProsRankings({ sport, boardType, season, position, li
   return {
     endpoint,
     players: players.filter((player) => player.displayName),
+  };
+}
+
+async function fetchFantasyProsRankingPages({ sport, boardType, season, position, limit = DEFAULT_RANKING_LIMIT }) {
+  const allPlayers = [];
+  const endpoints = [];
+  const seen = new Set();
+  let lastPageSize = 0;
+
+  for (let page = 1; page <= BATCH_MAX_PAGES; page += 1) {
+    const result = await fetchFantasyProsRankings({ sport, boardType, season, position, limit, page });
+    endpoints.push(result.endpoint);
+    lastPageSize = result.players.length;
+    const before = seen.size;
+
+    for (const player of result.players) {
+      if (!seen.has(player.normalizedName)) {
+        seen.add(player.normalizedName);
+        allPlayers.push(player);
+      }
+    }
+
+    if (result.players.length === 0 || seen.size === before) {
+      break;
+    }
+  }
+
+  return {
+    endpoint: endpoints.join(" | "),
+    players: allPlayers,
+    pagesFetched: endpoints.length,
+    lastPageSize,
   };
 }
 

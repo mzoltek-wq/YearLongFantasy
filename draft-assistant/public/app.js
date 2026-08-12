@@ -9,15 +9,51 @@ const BOARDS = [
   ["redraft", "Year to year"],
   ["dynasty", "Dynasty"],
 ];
+const POSITION_GROUPS = {
+  HOCKEY: [
+    ["ALL", "All"],
+    ["F", "Forwards"],
+    ["D", "Defense"],
+    ["G", "Goalies"],
+  ],
+  BASEBALL: [
+    ["ALL", "All"],
+    ["C", "C"],
+    ["1B", "1B"],
+    ["2B", "2B"],
+    ["3B", "3B"],
+    ["SS", "SS"],
+    ["OF", "OF"],
+    ["SP", "SP"],
+    ["RP", "RP"],
+  ],
+  FOOTBALL: [
+    ["ALL", "All"],
+    ["QB", "QB"],
+    ["RB", "RB"],
+    ["WR", "WR"],
+    ["TE", "TE"],
+    ["DEF", "DEF"],
+  ],
+  BASKETBALL: [
+    ["ALL", "All"],
+    ["G", "Guards"],
+    ["F", "Forwards"],
+    ["C", "Centers"],
+  ],
+  GOLF: [["ALL", "All"]],
+};
 
 let state = null;
 let currentSport = "HOCKEY";
 let currentBoard = "redraft";
+let currentPositionGroup = "ALL";
 let hideCrossedOff = true;
 
 const elements = {
   sportTabs: document.querySelector("#sportTabs"),
   boardTabs: document.querySelector("#boardTabs"),
+  positionTabs: document.querySelector("#positionTabs"),
   searchInput: document.querySelector("#searchInput"),
   playerList: document.querySelector("#playerList"),
   playerTemplate: document.querySelector("#playerTemplate"),
@@ -57,6 +93,7 @@ async function boot() {
 
 async function loadState() {
   state = await requestJson("/api/state");
+  state.players = state.players.map(normalizePlayerForClient);
 }
 
 function bindEvents() {
@@ -88,6 +125,7 @@ function renderTabs() {
     button.textContent = state ? `${label} ${count}` : label;
     button.addEventListener("click", () => {
       currentSport = sport;
+      currentPositionGroup = "ALL";
       renderTabs();
       render();
     });
@@ -112,6 +150,22 @@ function renderTabs() {
     }
     elements.boardTabs.append(button);
   }
+
+  elements.positionTabs.innerHTML = "";
+  for (const [positionGroup, label] of POSITION_GROUPS[currentSport]) {
+    const button = document.createElement("button");
+    const count = state?.players?.filter((player) => player.sport === currentSport && player.boardType === currentBoard && (positionGroup === "ALL" || normalizePositionGroup(player) === positionGroup)).length ?? 0;
+    button.textContent = state ? `${label} ${count}` : label;
+    button.addEventListener("click", () => {
+      currentPositionGroup = positionGroup;
+      renderTabs();
+      render();
+    });
+    if (positionGroup === currentPositionGroup) {
+      button.classList.add("active");
+    }
+    elements.positionTabs.append(button);
+  }
 }
 
 function render() {
@@ -132,9 +186,10 @@ function renderBoard() {
 
   const players = state.players
     .filter((player) => player.sport === currentSport && player.boardType === currentBoard)
+    .filter((player) => currentPositionGroup === "ALL" || normalizePositionGroup(player) === currentPositionGroup)
     .filter((player) => !query || [player.displayName, player.position, player.team, state.notes[player.id], player.injuryStatus, player.upsideNote].filter(Boolean).join(" ").toLowerCase().includes(query))
     .filter((player) => !hideCrossedOff || !state.crossedOff.includes(player.id))
-    .sort((left, right) => bestAvailableScore(left) - bestAvailableScore(right))
+    .sort(comparePlayers)
     .slice(0, 140);
 
   if (players.length === 0) {
@@ -155,7 +210,7 @@ function renderPlayerCard(player) {
   node.classList.toggle("crossed", crossed);
   node.querySelector(".rank").textContent = player.rank ?? "-";
   node.querySelector(".player-name").textContent = player.displayName;
-  node.querySelector(".player-meta").textContent = [player.position, player.team, player.source, player.injuryStatus].filter(Boolean).join(" • ");
+  node.querySelector(".player-meta").textContent = [normalizePositionGroup(player), player.position, player.team, player.source, player.injuryStatus].filter(Boolean).join(" • ");
   node.querySelector(".note-input").value = state.notes[player.id] ?? "";
   node.querySelector(".note-input").addEventListener("change", (event) => {
     state.notes[player.id] = event.target.value;
@@ -272,7 +327,7 @@ function renderSidebars() {
     const failureText = sync.failures?.length ? ` • ${sync.failures.length} failed` : "";
     const requestText = sync.requestCount ? ` • ${sync.requestCount} requests` : "";
     const resultText = sync.results?.length
-      ? ` • ${sync.results.map((entry) => `${entry.sport[0]}${entry.boardType[0]}${entry.position ? ` ${entry.position}` : ""}:${entry.imported}`).join(", ")}`
+      ? ` • ${sync.results.map((entry) => `${entry.sport[0]}${entry.boardType[0]}${entry.position ? ` ${entry.position}` : ""}:${entry.imported}${entry.pagesFetched ? `/${entry.pagesFetched}p` : ""}`).join(", ")}`
       : "";
     elements.recentSyncs.append(miniItem(`${sync.source} ${sync.sport}`, `${sync.boardType ?? ""} • ${sync.imported} players${requestText}${failureText}${resultText} • ${new Date(sync.at).toLocaleString()}`));
   }
@@ -321,6 +376,79 @@ function bestAvailableScore(player) {
   return score;
 }
 
+function comparePlayers(left, right) {
+  const leftPositionIndex = positionSortIndex(left);
+  const rightPositionIndex = positionSortIndex(right);
+  if (leftPositionIndex !== rightPositionIndex) {
+    return leftPositionIndex - rightPositionIndex;
+  }
+
+  return bestAvailableScore(left) - bestAvailableScore(right);
+}
+
+function positionSortIndex(player) {
+  const order = POSITION_GROUPS[player.sport]?.map(([positionGroup]) => positionGroup).filter((positionGroup) => positionGroup !== "ALL") ?? [];
+  const index = order.indexOf(normalizePositionGroup(player));
+  return index === -1 ? 999 : index;
+}
+
+function normalizePlayerForClient(player) {
+  return {
+    ...player,
+    positionGroup: player.positionGroup ?? normalizePositionGroup(player),
+  };
+}
+
+function normalizePositionGroup(player) {
+  const sport = player.sport;
+  const value = String(player.positionGroup ?? player.position ?? "").toUpperCase();
+  const firstPosition = value.split(",").map((entry) => entry.trim()).find(Boolean) ?? "";
+
+  if (sport === "HOCKEY") {
+    if (["C", "LW", "RW", "W", "F"].includes(firstPosition)) {
+      return "F";
+    }
+    if (["D", "DEF"].includes(firstPosition)) {
+      return "D";
+    }
+    if (["G", "GK"].includes(firstPosition)) {
+      return "G";
+    }
+  }
+
+  if (sport === "BASKETBALL") {
+    if (["PG", "SG", "G"].includes(firstPosition)) {
+      return "G";
+    }
+    if (["SF", "PF", "F"].includes(firstPosition)) {
+      return "F";
+    }
+    if (firstPosition === "C") {
+      return "C";
+    }
+  }
+
+  if (sport === "FOOTBALL") {
+    if (["QB", "RB", "WR", "TE", "DEF", "DST"].includes(firstPosition)) {
+      return firstPosition === "DST" ? "DEF" : firstPosition;
+    }
+  }
+
+  if (sport === "BASEBALL") {
+    if (["LF", "CF", "RF"].includes(firstPosition)) {
+      return "OF";
+    }
+    if (["C", "1B", "2B", "3B", "SS", "OF", "SP", "RP"].includes(firstPosition)) {
+      return firstPosition;
+    }
+    if (firstPosition === "DH") {
+      return "1B";
+    }
+  }
+
+  return firstPosition || "Other";
+}
+
 async function addManualWatchlistPlayer() {
   const playerName = elements.manualWatchNameInput.value.trim();
   if (!playerName) {
@@ -341,6 +469,7 @@ async function addManualWatchlistPlayer() {
   });
 
   state = result.state;
+  state.players = state.players.map(normalizePlayerForClient);
   elements.manualWatchNameInput.value = "";
   elements.manualWatchPositionInput.value = "";
   elements.manualWatchTeamInput.value = "";
@@ -361,6 +490,7 @@ async function saveState() {
     method: "PUT",
     body: JSON.stringify(state),
   });
+  state.players = state.players.map(normalizePlayerForClient);
   render();
 }
 
@@ -381,6 +511,7 @@ async function importCsv() {
     }),
   });
   state = result.state;
+  state.players = state.players.map(normalizePlayerForClient);
   elements.csvInput.value = "";
   render();
 }
@@ -406,6 +537,7 @@ async function syncFantasyPros() {
       }),
     });
     state = result.state;
+    state.players = state.players.map(normalizePlayerForClient);
     render();
   } catch (error) {
     alert(error.message);
@@ -438,6 +570,7 @@ async function syncAllFantasyPros() {
       }),
     });
     state = result.state;
+    state.players = state.players.map(normalizePlayerForClient);
     const firstImported = result.results.find((entry) => entry.imported > 0);
     if (firstImported) {
       currentSport = firstImported.sport;
