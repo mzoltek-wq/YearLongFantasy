@@ -84,7 +84,8 @@ function renderTabs() {
   elements.sportTabs.innerHTML = "";
   for (const [sport, label] of SPORTS) {
     const button = document.createElement("button");
-    button.textContent = label;
+    const count = state?.players?.filter((player) => player.sport === sport && player.boardType === currentBoard).length ?? 0;
+    button.textContent = state ? `${label} ${count}` : label;
     button.addEventListener("click", () => {
       currentSport = sport;
       renderTabs();
@@ -99,7 +100,8 @@ function renderTabs() {
   elements.boardTabs.innerHTML = "";
   for (const [board, label] of BOARDS) {
     const button = document.createElement("button");
-    button.textContent = label;
+    const count = state?.players?.filter((player) => player.sport === currentSport && player.boardType === board).length ?? 0;
+    button.textContent = state ? `${label} ${count}` : label;
     button.addEventListener("click", () => {
       currentBoard = board;
       renderTabs();
@@ -136,7 +138,7 @@ function renderBoard() {
     .slice(0, 140);
 
   if (players.length === 0) {
-    elements.playerList.innerHTML = `<p class="hint">No players for this tab yet. Sync FantasyPros or paste CSV rankings.</p>`;
+    elements.playerList.innerHTML = `<p class="hint">No players for this tab yet. Try another tab with a count, sync FantasyPros, or paste CSV rankings.</p>`;
     return;
   }
 
@@ -269,7 +271,10 @@ function renderSidebars() {
   for (const sync of state.syncs.slice(0, 12)) {
     const failureText = sync.failures?.length ? ` • ${sync.failures.length} failed` : "";
     const requestText = sync.requestCount ? ` • ${sync.requestCount} requests` : "";
-    elements.recentSyncs.append(miniItem(`${sync.source} ${sync.sport}`, `${sync.boardType ?? ""} • ${sync.imported} players${requestText}${failureText} • ${new Date(sync.at).toLocaleString()}`));
+    const resultText = sync.results?.length
+      ? ` • ${sync.results.map((entry) => `${entry.sport[0]}${entry.boardType[0]}${entry.position ? ` ${entry.position}` : ""}:${entry.imported}`).join(", ")}`
+      : "";
+    elements.recentSyncs.append(miniItem(`${sync.source} ${sync.sport}`, `${sync.boardType ?? ""} • ${sync.imported} players${requestText}${failureText}${resultText} • ${new Date(sync.at).toLocaleString()}`));
   }
 }
 
@@ -416,13 +421,13 @@ async function syncAllFantasyPros() {
   if (!position) {
     return;
   }
-  const confirmed = confirm("This will request 5 sports x 2 boards = 10 FantasyPros API calls. Continue?");
+  const confirmed = confirm("This will sync Hockey, Baseball, Basketball, and Football. Football uses QB/RB/WR/TE position requests, and Golf is skipped for now. Continue?");
   if (!confirmed) {
     return;
   }
 
   elements.syncAllFantasyProsButton.disabled = true;
-  elements.syncAllFantasyProsButton.textContent = "Syncing 10 boards...";
+  elements.syncAllFantasyProsButton.textContent = "Syncing boards...";
 
   try {
     const result = await requestJson("/api/sync/fantasypros/all", {
@@ -433,6 +438,11 @@ async function syncAllFantasyPros() {
       }),
     });
     state = result.state;
+    const firstImported = result.results.find((entry) => entry.imported > 0);
+    if (firstImported) {
+      currentSport = firstImported.sport;
+      currentBoard = firstImported.boardType;
+    }
     render();
     const imported = result.results.reduce((total, entry) => total + entry.imported, 0);
     alert(`FantasyPros batch sync complete. Imported ${imported} players. Failures: ${result.failures.length}.`);

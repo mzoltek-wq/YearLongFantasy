@@ -24,7 +24,9 @@ http://localhost:3100
 - Supports `redraft` and `dynasty` ranking boards.
 - Supports manual watchlist names that are not in rankings yet, such as golfers, prospects, overseas players, or rumor-based stashes.
 - Can sync from FantasyPros when `FANTASYPROS_API_KEY` is set.
-- Can run a one-time FantasyPros batch sync for all 5 sports and both ranking boards. This uses 10 API requests.
+- Can run a one-time FantasyPros batch sync for Hockey, Baseball, Basketball, and Football.
+- Football batch sync uses QB/RB/WR/TE position requests because the FantasyPros NFL endpoint does not accept `ALL`.
+- Golf is intentionally skipped in FantasyPros batch sync for now; use manual watchlist or a future OWGR import.
 - Supports CSV paste/import as a fallback for FantasyPros exports or custom rankings.
 
 ## FantasyPros Sync
@@ -32,3 +34,5 @@ http://localhost:3100
 The FantasyPros API can differ by sport and subscription. The sync endpoint stores any useful fields it receives and keeps the raw payload in local state, so we can adjust mappings after seeing the real responses from your API key.
 
 Your API key stays server-side in your terminal environment and is not sent to the browser.
+
+The sport and board tabs show player counts after sync. If a tab says `0`, that board did not return usable players from the latest import.

@@ -11,7 +11,10 @@ const STATE_PATH = path.join(DATA_DIR, "state.json");
 const PUBLIC_DIR = path.join(__dirname, "public");
 
 const SPORTS = ["HOCKEY", "BASEBALL", "FOOTBALL", "BASKETBALL", "GOLF"];
+const FANTASYPROS_BATCH_SPORTS = ["HOCKEY", "BASEBALL", "FOOTBALL", "BASKETBALL"];
 const BOARDS = ["redraft", "dynasty"];
+const DEFAULT_RANKING_LIMIT = 500;
+const FOOTBALL_BATCH_POSITIONS = ["QB", "RB", "WR", "TE"];
 
 const defaultState = {
   players: [],
@@ -129,7 +132,8 @@ const server = createServer(async (request, response) => {
       const boardType = normalizeBoardType(payload.boardType);
       const season = Number(payload.season ?? new Date().getFullYear());
       const position = String(payload.position ?? "ALL").toUpperCase();
-      const result = await fetchFantasyProsRankings({ sport, boardType, season, position });
+      const limit = Number(payload.limit ?? DEFAULT_RANKING_LIMIT);
+      const result = await fetchFantasyProsRankings({ sport, boardType, season, position, limit });
       const state = await loadState();
       state.players = mergePlayers(state.players, result.players);
       state.syncs.unshift({
@@ -148,27 +152,39 @@ const server = createServer(async (request, response) => {
       const payload = await readJson(request);
       const season = Number(payload.season ?? new Date().getFullYear());
       const position = String(payload.position ?? "ALL").toUpperCase();
+      const limit = Number(payload.limit ?? DEFAULT_RANKING_LIMIT);
       const state = await loadState();
       const results = [];
       const failures = [];
 
-      for (const sport of SPORTS) {
+      for (const sport of FANTASYPROS_BATCH_SPORTS) {
         for (const boardType of BOARDS) {
-          try {
-            const result = await fetchFantasyProsRankings({ sport, boardType, season, position });
-            state.players = mergePlayers(state.players, result.players);
-            results.push({
-              sport,
-              boardType,
-              imported: result.players.length,
-              endpoint: result.endpoint,
-            });
-          } catch (error) {
-            failures.push({
-              sport,
-              boardType,
-              error: error instanceof Error ? error.message : "Sync failed.",
-            });
+          const positions = getFantasyProsBatchPositions(sport, position);
+          for (const requestPosition of positions) {
+            try {
+              const result = await fetchFantasyProsRankings({
+                sport,
+                boardType,
+                season,
+                position: requestPosition,
+                limit,
+              });
+              state.players = mergePlayers(state.players, result.players);
+              results.push({
+                sport,
+                boardType,
+                position: requestPosition,
+                imported: result.players.length,
+                endpoint: result.endpoint,
+              });
+            } catch (error) {
+              failures.push({
+                sport,
+                boardType,
+                position: requestPosition,
+                error: error instanceof Error ? error.message : "Sync failed.",
+              });
+            }
           }
         }
       }
@@ -178,7 +194,8 @@ const server = createServer(async (request, response) => {
         sport: "ALL",
         boardType: "all",
         imported: results.reduce((total, result) => total + result.imported, 0),
-        requestCount: SPORTS.length * BOARDS.length,
+        requestCount: results.length + failures.length,
+        limit,
         results,
         failures,
         at: new Date().toISOString(),
@@ -407,7 +424,15 @@ function mergePlayers(existingPlayers, incomingPlayers) {
   return Array.from(byKey.values()).sort((left, right) => (left.rank ?? 9999) - (right.rank ?? 9999));
 }
 
-async function fetchFantasyProsRankings({ sport, boardType, season, position }) {
+function getFantasyProsBatchPositions(sport, requestedPosition) {
+  if (sport === "FOOTBALL" && requestedPosition === "ALL") {
+    return FOOTBALL_BATCH_POSITIONS;
+  }
+
+  return [requestedPosition];
+}
+
+async function fetchFantasyProsRankings({ sport, boardType, season, position, limit = DEFAULT_RANKING_LIMIT }) {
   const apiKey = process.env.FANTASYPROS_API_KEY;
   if (!apiKey) {
     throw new Error("Set FANTASYPROS_API_KEY before syncing FantasyPros rankings.");
@@ -421,7 +446,14 @@ async function fetchFantasyProsRankings({ sport, boardType, season, position }) 
     GOLF: "pga",
   }[sport];
   const rankingType = boardType === "dynasty" ? "dynasty" : "consensus";
-  const endpoint = `https://api.fantasypros.com/public/v2/json/${sportPath}/${season}/consensus-rankings?type=${encodeURIComponent(rankingType)}&position=${encodeURIComponent(position)}`;
+  const params = new URLSearchParams({
+    type: rankingType,
+    position,
+    limit: String(limit),
+    per_page: String(limit),
+    page: "1",
+  });
+  const endpoint = `https://api.fantasypros.com/public/v2/json/${sportPath}/${season}/consensus-rankings?${params.toString()}`;
   const response = await fetch(endpoint, {
     headers: {
       "x-api-key": apiKey,
@@ -441,9 +473,9 @@ async function fetchFantasyProsRankings({ sport, boardType, season, position }) 
       sport,
       boardType,
       source: "FantasyPros",
-      rank: Number(record.rank ?? record.overall_rank ?? record.ecr ?? index + 1),
-      position: String(record.position ?? record.pos ?? ""),
-      team: String(record.team ?? record.team_abbr ?? record.teamAbbr ?? ""),
+      rank: Number(record.rank ?? record.overall_rank ?? record.ecr ?? record.rank_ecr ?? record.rank_ave ?? index + 1),
+      position: String(record.position ?? record.pos ?? record.player_position_id ?? record.primary_position ?? record.player_positions ?? ""),
+      team: String(record.team ?? record.team_abbr ?? record.teamAbbr ?? record.player_team_id ?? ""),
       tier: toNullableNumber(record.tier),
       injuryStatus: String(record.injury_status ?? record.injuryStatus ?? record.status ?? ""),
       upsideNote: String(record.notes ?? record.outlook ?? ""),
