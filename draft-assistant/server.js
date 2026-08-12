@@ -87,6 +87,42 @@ const server = createServer(async (request, response) => {
       return json(response, { imported: importedPlayers.length, state });
     }
 
+    if (request.method === "POST" && url.pathname === "/api/watchlist/manual") {
+      const payload = await readJson(request);
+      const state = await loadState();
+      const player = createPlayerRecord({
+        displayName: String(payload.playerName ?? "").trim(),
+        sport: normalizeSport(payload.sport),
+        boardType: normalizeBoardType(payload.boardType),
+        source: "Manual Watchlist",
+        rank: 9999,
+        position: String(payload.position ?? "").trim(),
+        team: String(payload.team ?? "").trim(),
+        tier: null,
+        injuryStatus: String(payload.injuryStatus ?? "").trim(),
+        upsideNote: String(payload.note ?? "").trim(),
+        raw: {
+          addedManually: true,
+          note: String(payload.note ?? "").trim(),
+        },
+      });
+
+      if (!player.displayName) {
+        throw new Error("Player name is required.");
+      }
+
+      state.players = mergePlayers(state.players, [player]);
+      if (!state.watchlist.includes(player.id)) {
+        state.watchlist.push(player.id);
+      }
+      if (payload.note) {
+        state.notes[player.id] = String(payload.note).trim();
+      }
+
+      await saveState(state);
+      return json(response, { player, state });
+    }
+
     if (request.method === "POST" && url.pathname === "/api/sync/fantasypros") {
       const payload = await readJson(request);
       const sport = normalizeSport(payload.sport);

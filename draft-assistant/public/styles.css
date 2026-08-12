@@ -203,6 +203,22 @@ textarea {
   gap: 10px;
 }
 
+.two-col {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.watchlist-form {
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 20px;
+  padding-bottom: 20px;
+}
+
+.manual-note {
+  min-height: 82px;
+}
+
 .hint {
   color: var(--muted);
   font-size: 13px;

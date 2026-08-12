@@ -22,6 +22,7 @@ http://localhost:3100
 - Tracks your roster by sport.
 - Supports tabs for Hockey, Baseball, Football, Basketball, and Golf.
 - Supports `redraft` and `dynasty` ranking boards.
+- Supports manual watchlist names that are not in rankings yet, such as golfers, prospects, overseas players, or rumor-based stashes.
 - Can sync from FantasyPros when `FANTASYPROS_API_KEY` is set.
 - Supports CSV paste/import as a fallback for FantasyPros exports or custom rankings.
 

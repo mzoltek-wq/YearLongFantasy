@@ -28,6 +28,11 @@ const elements = {
   csvSourceInput: document.querySelector("#csvSourceInput"),
   importCsvButton: document.querySelector("#importCsvButton"),
   syncFantasyProsButton: document.querySelector("#syncFantasyProsButton"),
+  manualWatchNameInput: document.querySelector("#manualWatchNameInput"),
+  manualWatchPositionInput: document.querySelector("#manualWatchPositionInput"),
+  manualWatchTeamInput: document.querySelector("#manualWatchTeamInput"),
+  manualWatchNoteInput: document.querySelector("#manualWatchNoteInput"),
+  addManualWatchButton: document.querySelector("#addManualWatchButton"),
   hideCrossedOffInput: document.querySelector("#hideCrossedOffInput"),
   myRoster: document.querySelector("#myRoster"),
   injuryUpside: document.querySelector("#injuryUpside"),
@@ -70,6 +75,7 @@ function bindEvents() {
   });
   elements.importCsvButton.addEventListener("click", importCsv);
   elements.syncFantasyProsButton.addEventListener("click", syncFantasyPros);
+  elements.addManualWatchButton.addEventListener("click", addManualWatchlistPlayer);
 }
 
 function renderTabs() {
@@ -158,6 +164,9 @@ function renderPlayerCard(player) {
   }
   if (watched) {
     badges.append(badge("Watch", "sky"));
+  }
+  if (player.source === "Manual Watchlist") {
+    badges.append(badge("Manual", "gold"));
   }
   if (dnd) {
     badges.append(badge("DND", "rose"));
@@ -292,7 +301,7 @@ function miniItem(title, subtitle, onRemove) {
 function bestAvailableScore(player) {
   let score = Number(player.rank ?? 9999);
   if (state.watchlist.includes(player.id)) {
-    score -= 8;
+    score -= player.source === "Manual Watchlist" ? 9800 : 8;
   }
   if (state.doNotDraft.includes(player.id)) {
     score += 400;
@@ -301,6 +310,33 @@ function bestAvailableScore(player) {
     score -= 4;
   }
   return score;
+}
+
+async function addManualWatchlistPlayer() {
+  const playerName = elements.manualWatchNameInput.value.trim();
+  if (!playerName) {
+    alert("Enter a player/prospect name first.");
+    return;
+  }
+
+  const result = await requestJson("/api/watchlist/manual", {
+    method: "POST",
+    body: JSON.stringify({
+      playerName,
+      sport: currentSport,
+      boardType: currentBoard,
+      position: elements.manualWatchPositionInput.value,
+      team: elements.manualWatchTeamInput.value,
+      note: elements.manualWatchNoteInput.value,
+    }),
+  });
+
+  state = result.state;
+  elements.manualWatchNameInput.value = "";
+  elements.manualWatchPositionInput.value = "";
+  elements.manualWatchTeamInput.value = "";
+  elements.manualWatchNoteInput.value = "";
+  render();
 }
 
 function isInjuryUpside(player) {
