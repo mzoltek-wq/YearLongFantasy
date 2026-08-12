@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Private Draft Assistant</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Private local draft room</p>
+          <h1>Best Available</h1>
+          <p class="lede">FantasyPros rankings, keeper exclusions, crossed-off players, and your roster targets in one private board.</p>
+        </div>
+        <div class="hero-actions">
+          <button id="saveStateButton" class="button secondary">Save state</button>
+          <button id="refreshButton" class="button">Refresh</button>
+        </div>
+      </header>
+
+      <section class="scoreboard">
+        <article>
+          <span>Available</span>
+          <strong id="availableCount">0</strong>
+        </article>
+        <article>
+          <span>Crossed off</span>
+          <strong id="crossedOffCount">0</strong>
+        </article>
+        <article>
+          <span>Watchlist</span>
+          <strong id="watchlistCount">0</strong>
+        </article>
+        <article>
+          <span>Roster</span>
+          <strong id="rosterCount">0</strong>
+        </article>
+      </section>
+
+      <section class="toolbar">
+        <div class="tabs" id="sportTabs"></div>
+        <div class="tabs compact" id="boardTabs"></div>
+        <input id="searchInput" class="search" placeholder="Search player, team, position, note" />
+      </section>
+
+      <section class="grid">
+        <aside class="panel">
+          <h2>Roster Needs</h2>
+          <div id="rosterNeeds" class="needs"></div>
+
+          <h2>Strategy</h2>
+          <textarea id="strategyInput" class="strategy"></textarea>
+
+          <h2>Import Rankings</h2>
+          <div class="stack">
+            <label>
+              Source
+              <input id="csvSourceInput" value="CSV" />
+            </label>
+            <textarea id="csvInput" class="csv" placeholder="Paste CSV: rank,player,position,team,tier,injury,note"></textarea>
+            <button id="importCsvButton" class="button full">Import CSV to current tab</button>
+            <button id="syncFantasyProsButton" class="button secondary full">Sync FantasyPros current tab</button>
+          </div>
+          <p class="hint">Your FantasyPros key stays in the local server environment, not in this browser.</p>
+        </aside>
+
+        <section class="panel board">
+          <div class="board-header">
+            <div>
+              <p class="eyebrow">Board</p>
+              <h2 id="boardTitle">Hockey Redraft</h2>
+            </div>
+            <label class="toggle">
+              <input id="hideCrossedOffInput" type="checkbox" checked />
+              Hide crossed off
+            </label>
+          </div>
+          <div id="playerList" class="player-list"></div>
+        </section>
+
+        <aside class="panel">
+          <h2>My Roster</h2>
+          <div id="myRoster" class="mini-list"></div>
+
+          <h2>Injury Upside</h2>
+          <div id="injuryUpside" class="mini-list"></div>
+
+          <h2>Recent Syncs</h2>
+          <div id="recentSyncs" class="mini-list"></div>
+        </aside>
+      </section>
+    </main>
+
+    <template id="playerTemplate">
+      <article class="player-card">
+        <div class="rank"></div>
+        <div class="player-main">
+          <div class="player-top">
+            <strong class="player-name"></strong>
+            <span class="badges"></span>
+          </div>
+          <p class="player-meta"></p>
+          <textarea class="note-input" placeholder="Private note"></textarea>
+        </div>
+        <div class="player-actions">
+          <button class="cross-button">Cross off</button>
+          <button class="roster-button">Add roster</button>
+          <button class="watch-button">Watch</button>
+          <button class="dnf-button">DND</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

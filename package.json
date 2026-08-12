@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "NEXT_TEST_WASM_DIR=./node_modules/@next/swc-wasm-nodejs next dev",
+    "assistant:dev": "npm --prefix draft-assistant run dev",
     "build": "prisma generate && NEXT_TEST_WASM_DIR=./node_modules/@next/swc-wasm-nodejs next build",
     "start": "next start",
     "lint": "eslint .",
