@@ -30,6 +30,7 @@ const defaultState = {
   watchlist: [],
   doNotDraft: [],
   crossedOff: [],
+  leagueCrossedOff: [],
   settings: {
     rosterTargets: {
       HOCKEY: 17,
@@ -47,6 +48,8 @@ const defaultState = {
     },
     integrations: {
       fantasyProsApiKey: "",
+      leagueAppUrl: "http://localhost:3000",
+      leagueAutoSync: true,
     },
   },
   syncs: [],
@@ -74,7 +77,18 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "PUT" && url.pathname === "/api/state") {
       const payload = await readJson(request);
-      const state = normalizeState(payload);
+      const existingState = await loadState();
+      const state = normalizeState({
+        ...payload,
+        settings: {
+          ...(payload.settings ?? {}),
+          integrations: {
+            ...existingState.settings.integrations,
+            ...(payload.settings?.integrations ?? {}),
+            fantasyProsApiKey: existingState.settings.integrations.fantasyProsApiKey,
+          },
+        },
+      });
       await saveState(state);
       return json(response, sanitizeStateForClient(state));
     }
@@ -92,6 +106,47 @@ const server = createServer(async (request, response) => {
       state.settings.integrations.fantasyProsApiKey = "";
       await saveState(state);
       return json(response, sanitizeStateForClient(state));
+    }
+
+    if (request.method === "PUT" && url.pathname === "/api/settings/league-app-url") {
+      const payload = await readJson(request);
+      const state = await loadState();
+      state.settings.integrations.leagueAppUrl = normalizeLeagueAppUrl(payload.leagueAppUrl);
+      state.settings.integrations.leagueAutoSync = Boolean(payload.leagueAutoSync);
+      await saveState(state);
+      return json(response, sanitizeStateForClient(state));
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/sync/league-unavailable") {
+      const state = await loadState();
+      const leagueAppUrl = getLeagueAppUrl(state);
+      const result = await fetchLeagueUnavailablePlayers(leagueAppUrl);
+      const matchedPlayerIds = getMatchingPlayerIds(state.players, result.players);
+      const previousCrossedOffIds = new Set(state.crossedOff);
+      const previousLeagueCrossedOffIds = new Set(state.leagueCrossedOff);
+      const manualCrossedOffIds = state.crossedOff.filter((playerId) => !previousLeagueCrossedOffIds.has(playerId));
+      state.leagueCrossedOff = matchedPlayerIds;
+      state.crossedOff = Array.from(new Set([...manualCrossedOffIds, ...matchedPlayerIds]));
+      const newCrossedOffCount = matchedPlayerIds.filter((playerId) => !previousCrossedOffIds.has(playerId)).length;
+      state.syncs.unshift({
+        source: "League app",
+        sport: "ALL",
+        boardType: "all",
+        imported: matchedPlayerIds.length,
+        unavailablePlayers: result.players.length,
+        newlyCrossedOff: newCrossedOffCount,
+        unmatched: getUnmatchedLeaguePlayers(state.players, result.players).slice(0, 30),
+        leagueAppUrl,
+        at: new Date().toISOString(),
+      });
+      await saveState(state);
+      return json(response, {
+        unavailablePlayers: result.players.length,
+        matchedPlayers: matchedPlayerIds.length,
+        newlyCrossedOff: newCrossedOffCount,
+        unmatchedPlayers: getUnmatchedLeaguePlayers(state.players, result.players),
+        state: sanitizeStateForClient(state),
+      });
     }
 
     if (request.method === "POST" && url.pathname === "/api/debug/fantasypros") {
@@ -312,6 +367,7 @@ function normalizeState(state) {
     watchlist: Array.isArray(state?.watchlist) ? state.watchlist : [],
     doNotDraft: Array.isArray(state?.doNotDraft) ? state.doNotDraft : [],
     crossedOff: Array.isArray(state?.crossedOff) ? state.crossedOff : [],
+    leagueCrossedOff: Array.isArray(state?.leagueCrossedOff) ? state.leagueCrossedOff : [],
     syncs: Array.isArray(state?.syncs) ? state.syncs : [],
     settings: {
       ...defaultState.settings,
@@ -350,6 +406,23 @@ function sanitizeStateForClient(state) {
 
 function getFantasyProsApiKey(state) {
   return state.settings.integrations.fantasyProsApiKey || process.env.FANTASYPROS_API_KEY || "";
+}
+
+function getLeagueAppUrl(state) {
+  return state.settings.integrations.leagueAppUrl || process.env.LEAGUE_APP_URL || "http://localhost:3000";
+}
+
+function normalizeLeagueAppUrl(value) {
+  const url = String(value ?? "").trim() || "http://localhost:3000";
+  try {
+    const parsed = new URL(url);
+    parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    throw new Error("Enter a valid league app URL, like http://localhost:3000.");
+  }
 }
 
 function getFantasyProsApiKeyOptions(state) {
@@ -539,6 +612,52 @@ function mergePlayers(existingPlayers, incomingPlayers) {
   }
 
   return Array.from(byKey.values()).sort((left, right) => (left.rank ?? 9999) - (right.rank ?? 9999));
+}
+
+async function fetchLeagueUnavailablePlayers(leagueAppUrl) {
+  const endpoint = `${leagueAppUrl.replace(/\/$/, "")}/api/assistant/unavailable`;
+  const response = await fetch(endpoint, {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`League app unavailable sync failed (${response.status}): ${await response.text()}`);
+  }
+
+  const payload = await response.json();
+  return {
+    ...payload,
+    players: Array.isArray(payload.players) ? payload.players.map(normalizeLeagueUnavailablePlayer).filter((player) => player.normalizedName) : [],
+  };
+}
+
+function normalizeLeagueUnavailablePlayer(player) {
+  return {
+    displayName: String(player?.displayName ?? player?.playerName ?? "").trim(),
+    normalizedName: normalizeName(player?.normalizedName ?? player?.displayName ?? player?.playerName ?? ""),
+    sport: player?.sport ?? null,
+    managerName: player?.managerName ?? player?.ownerName ?? null,
+    source: player?.source ?? null,
+  };
+}
+
+function getMatchingPlayerIds(rankingPlayers, leaguePlayers) {
+  const leagueNames = new Set(leaguePlayers.map((player) => player.normalizedName).filter(Boolean));
+  return rankingPlayers.filter((player) => leagueNames.has(player.normalizedName)).map((player) => player.id);
+}
+
+function getUnmatchedLeaguePlayers(rankingPlayers, leaguePlayers) {
+  const rankingNames = new Set(rankingPlayers.map((player) => player.normalizedName));
+  return leaguePlayers
+    .filter((player) => !rankingNames.has(player.normalizedName))
+    .map((player) => ({
+      displayName: player.displayName,
+      sport: player.sport,
+      managerName: player.managerName,
+      source: player.source,
+    }));
 }
 
 function normalizePositionGroup(sport, position) {

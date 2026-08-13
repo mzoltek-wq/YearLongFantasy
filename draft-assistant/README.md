@@ -29,6 +29,7 @@ http://localhost:3100
 - Golf is intentionally skipped in FantasyPros batch sync for now; use manual watchlist or a future OWGR import.
 - Normalizes positions into draft-useful groups: Hockey F/D/G, Baseball C/1B/2B/3B/SS/OF/SP/RP, Football QB/RB/WR/TE/DEF, and Basketball G/F/C.
 - Supports CSV paste/import as a fallback for FantasyPros exports or custom rankings.
+- Can bridge to the league app and auto-cross off keepers/drafted players while both apps are running locally.
 
 ## FantasyPros Sync
 
@@ -39,3 +40,7 @@ Your API key is saved only in the local assistant state file at `draft-assistant
 The sport and board tabs show player counts after sync. If a tab says `0`, that board did not return usable players from the latest import.
 
 Batch sync uses about 46 FantasyPros requests and waits between calls to stay under the documented 1 request/second limit. If FantasyPros still returns `429 Limit Exceeded`, the players already imported are saved and the remaining positions can be retried later.
+
+## League App Bridge
+
+Keep the main league app running at `http://localhost:3000` and the private assistant running at `http://localhost:3100`. The assistant can call the league app's `/api/assistant/unavailable` endpoint to cross off current keepers and selected draft picks from your private rankings. Auto-sync runs while the assistant page is open, so new picks entered in the league app will disappear from the assistant shortly after.

@@ -49,6 +49,8 @@ let currentSport = "HOCKEY";
 let currentBoard = "redraft";
 let currentPositionGroup = "ALL";
 let hideCrossedOff = true;
+let leagueAutoSyncTimer = null;
+let isLeagueSyncing = false;
 
 const elements = {
   sportTabs: document.querySelector("#sportTabs"),
@@ -62,6 +64,11 @@ const elements = {
   strategyInput: document.querySelector("#strategyInput"),
   csvInput: document.querySelector("#csvInput"),
   csvSourceInput: document.querySelector("#csvSourceInput"),
+  leagueAppUrlInput: document.querySelector("#leagueAppUrlInput"),
+  leagueAutoSyncInput: document.querySelector("#leagueAutoSyncInput"),
+  saveLeagueBridgeButton: document.querySelector("#saveLeagueBridgeButton"),
+  syncLeagueButton: document.querySelector("#syncLeagueButton"),
+  leagueBridgeStatus: document.querySelector("#leagueBridgeStatus"),
   fantasyProsApiKeyInput: document.querySelector("#fantasyProsApiKeyInput"),
   fantasyProsKeyStatus: document.querySelector("#fantasyProsKeyStatus"),
   saveFantasyProsKeyButton: document.querySelector("#saveFantasyProsKeyButton"),
@@ -116,6 +123,8 @@ function bindEvents() {
     render();
   });
   elements.importCsvButton.addEventListener("click", importCsv);
+  elements.saveLeagueBridgeButton.addEventListener("click", saveLeagueBridgeSettings);
+  elements.syncLeagueButton.addEventListener("click", () => syncLeagueUnavailable({ quiet: false }));
   elements.saveFantasyProsKeyButton.addEventListener("click", saveFantasyProsKey);
   elements.syncFantasyProsButton.addEventListener("click", syncFantasyPros);
   elements.debugFantasyProsButton.addEventListener("click", debugFantasyPros);
@@ -181,7 +190,26 @@ function render() {
   renderSidebars();
   renderCounts();
   elements.strategyInput.value = state.settings.strategy[currentSport] ?? "";
+  elements.leagueAppUrlInput.value = state.settings.integrations?.leagueAppUrl ?? "http://localhost:3000";
+  elements.leagueAutoSyncInput.checked = state.settings.integrations?.leagueAutoSync !== false;
+  renderLeagueBridgeStatus();
   renderFantasyProsKeyStatus();
+  setupLeagueAutoSync();
+}
+
+function renderLeagueBridgeStatus(message) {
+  if (message) {
+    elements.leagueBridgeStatus.textContent = message;
+    return;
+  }
+
+  const latestSync = state.syncs.find((sync) => sync.source === "League app");
+  if (!latestSync) {
+    elements.leagueBridgeStatus.textContent = "League bridge not synced yet.";
+    return;
+  }
+
+  elements.leagueBridgeStatus.textContent = `${latestSync.unavailablePlayers ?? 0} league players found, ${latestSync.imported ?? 0} ranking rows crossed off. Last sync ${new Date(latestSync.at).toLocaleTimeString()}.`;
 }
 
 function renderFantasyProsKeyStatus() {
@@ -343,7 +371,8 @@ function renderSidebars() {
     const resultText = sync.results?.length
       ? ` • ${sync.results.map((entry) => `${entry.sport[0]}${entry.boardType[0]}${entry.position ? ` ${entry.position}` : ""}:${entry.imported}${entry.pagesFetched ? `/${entry.pagesFetched}p` : ""}`).join(", ")}`
       : "";
-    elements.recentSyncs.append(miniItem(`${sync.source} ${sync.sport}`, `${sync.boardType ?? ""} • ${sync.imported} players${requestText}${failureText}${resultText}${firstFailureText} • ${new Date(sync.at).toLocaleString()}`));
+    const leagueText = sync.source === "League app" ? ` • ${sync.unavailablePlayers ?? 0} unavailable • ${sync.newlyCrossedOff ?? 0} new` : "";
+    elements.recentSyncs.append(miniItem(`${sync.source} ${sync.sport}`, `${sync.boardType ?? ""} • ${sync.imported} players${leagueText}${requestText}${failureText}${resultText}${firstFailureText} • ${new Date(sync.at).toLocaleString()}`));
   }
 }
 
@@ -528,6 +557,75 @@ async function importCsv() {
   state.players = state.players.map(normalizePlayerForClient);
   elements.csvInput.value = "";
   render();
+}
+
+async function saveLeagueBridgeSettings() {
+  try {
+    state = await requestJson("/api/settings/league-app-url", {
+      method: "PUT",
+      body: JSON.stringify({
+        leagueAppUrl: elements.leagueAppUrlInput.value,
+        leagueAutoSync: elements.leagueAutoSyncInput.checked,
+      }),
+    });
+    state.players = state.players.map(normalizePlayerForClient);
+    render();
+    alert("League bridge settings saved.");
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+function setupLeagueAutoSync() {
+  if (leagueAutoSyncTimer) {
+    clearInterval(leagueAutoSyncTimer);
+    leagueAutoSyncTimer = null;
+  }
+
+  if (state.settings.integrations?.leagueAutoSync === false) {
+    return;
+  }
+
+  leagueAutoSyncTimer = setInterval(() => {
+    syncLeagueUnavailable({ quiet: true });
+  }, 5000);
+}
+
+async function syncLeagueUnavailable({ quiet }) {
+  if (isLeagueSyncing) {
+    return;
+  }
+
+  isLeagueSyncing = true;
+  elements.syncLeagueButton.disabled = true;
+  if (!quiet) {
+    elements.syncLeagueButton.textContent = "Syncing league...";
+    renderLeagueBridgeStatus("Syncing keepers and picks from league app...");
+  }
+
+  try {
+    const result = await requestJson("/api/sync/league-unavailable", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    state = result.state;
+    state.players = state.players.map(normalizePlayerForClient);
+    render();
+    const message = `${result.unavailablePlayers} league players found. ${result.matchedPlayers} ranking rows crossed off (${result.newlyCrossedOff} new).${result.unmatchedPlayers.length ? ` ${result.unmatchedPlayers.length} did not match rankings yet.` : ""}`;
+    renderLeagueBridgeStatus(message);
+    if (!quiet) {
+      alert(message);
+    }
+  } catch (error) {
+    renderLeagueBridgeStatus(`League bridge sync failed: ${error.message}`);
+    if (!quiet) {
+      alert(error.message);
+    }
+  } finally {
+    isLeagueSyncing = false;
+    elements.syncLeagueButton.disabled = false;
+    elements.syncLeagueButton.textContent = "Sync keepers/picks now";
+  }
 }
 
 async function saveFantasyProsKey() {

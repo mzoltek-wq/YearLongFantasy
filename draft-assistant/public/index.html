@@ -68,6 +68,17 @@
           <h2>Import Rankings</h2>
           <div class="stack">
             <label>
+              League app URL
+              <input id="leagueAppUrlInput" placeholder="http://localhost:3000" />
+            </label>
+            <label class="toggle inline-toggle">
+              <input id="leagueAutoSyncInput" type="checkbox" checked />
+              Auto-cross off league picks while this page is open
+            </label>
+            <button id="saveLeagueBridgeButton" class="button secondary full">Save league bridge settings</button>
+            <button id="syncLeagueButton" class="button full">Sync keepers/picks now</button>
+            <p id="leagueBridgeStatus" class="hint">League bridge not synced yet.</p>
+            <label>
               FantasyPros API key
               <input id="fantasyProsApiKeyInput" type="password" placeholder="Paste key to store locally" autocomplete="off" />
             </label>

@@ -300,6 +300,14 @@ textarea {
   width: auto;
 }
 
+.inline-toggle {
+  align-items: flex-start;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.3;
+  white-space: normal;
+}
+
 .player-list {
   display: grid;
   gap: 10px;
