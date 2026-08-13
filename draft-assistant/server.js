@@ -559,10 +559,10 @@ async function fetchFantasyProsBroadRankings({ apiKey, sport, boardType, season,
 
 async function fetchFantasyProsConsensusRankings({ apiKey, sport, boardType, season, position, limit }) {
   const sportPath = getFantasyProsSportPath(sport);
-  const rankingType = boardType === "dynasty" ? "DYNASTY" : "DRAFT";
+  const rankingType = boardType === "dynasty" ? "dynasty" : "consensus";
   const params = new URLSearchParams({
     type: rankingType,
-    position: position === "ALL" ? "" : position,
+    position,
     limit: String(limit),
   });
   removeBlankSearchParams(params);

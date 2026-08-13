@@ -325,11 +325,12 @@ function renderSidebars() {
   elements.recentSyncs.innerHTML = "";
   for (const sync of state.syncs.slice(0, 12)) {
     const failureText = sync.failures?.length ? ` • ${sync.failures.length} failed` : "";
+    const firstFailureText = sync.failures?.[0]?.error ? ` • First failure: ${summarizeSyncError(sync.failures[0].error)}` : "";
     const requestText = sync.requestCount ? ` • ${sync.requestCount} requests` : "";
     const resultText = sync.results?.length
       ? ` • ${sync.results.map((entry) => `${entry.sport[0]}${entry.boardType[0]}${entry.position ? ` ${entry.position}` : ""}:${entry.imported}${entry.pagesFetched ? `/${entry.pagesFetched}p` : ""}`).join(", ")}`
       : "";
-    elements.recentSyncs.append(miniItem(`${sync.source} ${sync.sport}`, `${sync.boardType ?? ""} • ${sync.imported} players${requestText}${failureText}${resultText} • ${new Date(sync.at).toLocaleString()}`));
+    elements.recentSyncs.append(miniItem(`${sync.source} ${sync.sport}`, `${sync.boardType ?? ""} • ${sync.imported} players${requestText}${failureText}${resultText}${firstFailureText} • ${new Date(sync.at).toLocaleString()}`));
   }
 }
 
@@ -574,13 +575,22 @@ async function syncAllFantasyPros() {
     }
     render();
     const imported = result.results.reduce((total, entry) => total + entry.imported, 0);
-    alert(`FantasyPros batch sync complete. Imported ${imported} players. Failures: ${result.failures.length}.`);
+    const failureSummary = result.failures.length ? `\n\nFirst failure: ${summarizeSyncError(result.failures[0].error)}` : "";
+    alert(`FantasyPros batch sync complete. Imported ${imported} players. Failures: ${result.failures.length}.${failureSummary}`);
   } catch (error) {
     alert(error.message);
   } finally {
     elements.syncAllFantasyProsButton.disabled = false;
     elements.syncAllFantasyProsButton.textContent = "Sync all FantasyPros boards once";
   }
+}
+
+function summarizeSyncError(error) {
+  return String(error ?? "")
+    .replace(/\s+/g, " ")
+    .replaceAll('{"message":"Forbidden"}', "Forbidden")
+    .trim()
+    .slice(0, 260);
 }
 
 async function requestJson(url, options = {}) {
