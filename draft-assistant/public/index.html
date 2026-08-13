@@ -68,6 +68,12 @@
           <h2>Import Rankings</h2>
           <div class="stack">
             <label>
+              FantasyPros API key
+              <input id="fantasyProsApiKeyInput" type="password" placeholder="Paste key to store locally" autocomplete="off" />
+            </label>
+            <button id="saveFantasyProsKeyButton" class="button secondary full">Save FantasyPros key locally</button>
+            <p id="fantasyProsKeyStatus" class="hint">No FantasyPros key saved locally.</p>
+            <label>
               Source
               <input id="csvSourceInput" value="CSV" />
             </label>
@@ -76,7 +82,7 @@
             <button id="syncFantasyProsButton" class="button secondary full">Sync FantasyPros current tab</button>
             <button id="syncAllFantasyProsButton" class="button danger full">Sync all FantasyPros boards once</button>
           </div>
-          <p class="hint">Your FantasyPros key stays in the local server environment, not in this browser.</p>
+          <p class="hint">The saved key is stored in the gitignored local state file on this Mac, not committed to GitHub.</p>
         </aside>
 
         <section class="panel board">

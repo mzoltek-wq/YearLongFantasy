@@ -38,6 +38,9 @@ const defaultState = {
       BASKETBALL: "Favor high-upside dynasty value.",
       GOLF: "Wait unless a top tier falls.",
     },
+    integrations: {
+      fantasyProsApiKey: "",
+    },
   },
   syncs: [],
 };
@@ -59,14 +62,22 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === "GET" && url.pathname === "/api/state") {
-      return json(response, await loadState());
+      return json(response, sanitizeStateForClient(await loadState()));
     }
 
     if (request.method === "PUT" && url.pathname === "/api/state") {
       const payload = await readJson(request);
       const state = normalizeState(payload);
       await saveState(state);
-      return json(response, state);
+      return json(response, sanitizeStateForClient(state));
+    }
+
+    if (request.method === "PUT" && url.pathname === "/api/settings/fantasypros-key") {
+      const payload = await readJson(request);
+      const state = await loadState();
+      state.settings.integrations.fantasyProsApiKey = String(payload.apiKey ?? "").trim();
+      await saveState(state);
+      return json(response, sanitizeStateForClient(state));
     }
 
     if (request.method === "POST" && url.pathname === "/api/import/csv") {
@@ -87,7 +98,7 @@ const server = createServer(async (request, response) => {
         at: new Date().toISOString(),
       });
       await saveState(state);
-      return json(response, { imported: importedPlayers.length, state });
+      return json(response, { imported: importedPlayers.length, state: sanitizeStateForClient(state) });
     }
 
     if (request.method === "POST" && url.pathname === "/api/watchlist/manual") {
@@ -123,7 +134,7 @@ const server = createServer(async (request, response) => {
       }
 
       await saveState(state);
-      return json(response, { player, state });
+      return json(response, { player, state: sanitizeStateForClient(state) });
     }
 
     if (request.method === "POST" && url.pathname === "/api/sync/fantasypros") {
@@ -133,8 +144,8 @@ const server = createServer(async (request, response) => {
       const season = Number(payload.season ?? new Date().getFullYear());
       const position = String(payload.position ?? "ALL").toUpperCase();
       const limit = Number(payload.limit ?? DEFAULT_RANKING_LIMIT);
-      const result = await fetchFantasyProsRankings({ sport, boardType, season, position, limit });
       const state = await loadState();
+      const result = await fetchFantasyProsRankings({ sport, boardType, season, position, limit, apiKey: getFantasyProsApiKey(state) });
       state.players = mergePlayers(state.players, result.players);
       state.syncs.unshift({
         source: "FantasyPros",
@@ -145,7 +156,7 @@ const server = createServer(async (request, response) => {
         at: new Date().toISOString(),
       });
       await saveState(state);
-      return json(response, { imported: result.players.length, endpoint: result.endpoint, state });
+      return json(response, { imported: result.players.length, endpoint: result.endpoint, state: sanitizeStateForClient(state) });
     }
 
     if (request.method === "POST" && url.pathname === "/api/sync/fantasypros/all") {
@@ -167,6 +178,7 @@ const server = createServer(async (request, response) => {
               season,
               position,
               limit,
+              apiKey: getFantasyProsApiKey(state),
             });
             state.players = mergePlayers(state.players, result.players);
             results.push({
@@ -200,7 +212,7 @@ const server = createServer(async (request, response) => {
       });
 
       await saveState(state);
-      return json(response, { results, failures, state });
+      return json(response, { results, failures, state: sanitizeStateForClient(state) });
     }
 
     json(response, { error: "Not found" }, 404);
@@ -268,8 +280,32 @@ function normalizeState(state) {
         ...defaultState.settings.strategy,
         ...(state?.settings?.strategy ?? {}),
       },
+      integrations: {
+        ...defaultState.settings.integrations,
+        ...(state?.settings?.integrations ?? {}),
+      },
     },
   };
+}
+
+function sanitizeStateForClient(state) {
+  const normalizedState = normalizeState(state);
+  const hasFantasyProsKey = Boolean(normalizedState.settings.integrations.fantasyProsApiKey);
+  return {
+    ...normalizedState,
+    settings: {
+      ...normalizedState.settings,
+      integrations: {
+        ...normalizedState.settings.integrations,
+        fantasyProsApiKey: "",
+        hasFantasyProsApiKey: hasFantasyProsKey,
+      },
+    },
+  };
+}
+
+function getFantasyProsApiKey(state) {
+  return state.settings.integrations.fantasyProsApiKey || process.env.FANTASYPROS_API_KEY || "";
 }
 
 function normalizePlayerRecord(player) {
@@ -517,10 +553,9 @@ function delay(milliseconds) {
   });
 }
 
-async function fetchFantasyProsRankings({ sport, boardType, season, position, limit = DEFAULT_RANKING_LIMIT }) {
-  const apiKey = process.env.FANTASYPROS_API_KEY;
+async function fetchFantasyProsRankings({ sport, boardType, season, position, limit = DEFAULT_RANKING_LIMIT, apiKey }) {
   if (!apiKey) {
-    throw new Error("Set FANTASYPROS_API_KEY before syncing FantasyPros rankings.");
+    throw new Error("Save a FantasyPros API key in the assistant settings or set FANTASYPROS_API_KEY before syncing rankings.");
   }
 
   const attempts = [

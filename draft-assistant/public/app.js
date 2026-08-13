@@ -62,6 +62,9 @@ const elements = {
   strategyInput: document.querySelector("#strategyInput"),
   csvInput: document.querySelector("#csvInput"),
   csvSourceInput: document.querySelector("#csvSourceInput"),
+  fantasyProsApiKeyInput: document.querySelector("#fantasyProsApiKeyInput"),
+  fantasyProsKeyStatus: document.querySelector("#fantasyProsKeyStatus"),
+  saveFantasyProsKeyButton: document.querySelector("#saveFantasyProsKeyButton"),
   importCsvButton: document.querySelector("#importCsvButton"),
   syncFantasyProsButton: document.querySelector("#syncFantasyProsButton"),
   syncAllFantasyProsButton: document.querySelector("#syncAllFantasyProsButton"),
@@ -112,6 +115,7 @@ function bindEvents() {
     render();
   });
   elements.importCsvButton.addEventListener("click", importCsv);
+  elements.saveFantasyProsKeyButton.addEventListener("click", saveFantasyProsKey);
   elements.syncFantasyProsButton.addEventListener("click", syncFantasyPros);
   elements.syncAllFantasyProsButton.addEventListener("click", syncAllFantasyPros);
   elements.addManualWatchButton.addEventListener("click", addManualWatchlistPlayer);
@@ -175,6 +179,13 @@ function render() {
   renderSidebars();
   renderCounts();
   elements.strategyInput.value = state.settings.strategy[currentSport] ?? "";
+  renderFantasyProsKeyStatus();
+}
+
+function renderFantasyProsKeyStatus() {
+  elements.fantasyProsKeyStatus.textContent = state.settings.integrations?.hasFantasyProsApiKey
+    ? "FantasyPros key saved locally."
+    : "No FantasyPros key saved locally.";
 }
 
 function renderBoard() {
@@ -514,6 +525,22 @@ async function importCsv() {
   state = result.state;
   state.players = state.players.map(normalizePlayerForClient);
   elements.csvInput.value = "";
+  render();
+}
+
+async function saveFantasyProsKey() {
+  const apiKey = elements.fantasyProsApiKeyInput.value.trim();
+  if (!apiKey) {
+    alert("Paste a FantasyPros API key first.");
+    return;
+  }
+
+  state = await requestJson("/api/settings/fantasypros-key", {
+    method: "PUT",
+    body: JSON.stringify({ apiKey }),
+  });
+  state.players = state.players.map(normalizePlayerForClient);
+  elements.fantasyProsApiKeyInput.value = "";
   render();
 }
 
