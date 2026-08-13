@@ -67,6 +67,7 @@ const elements = {
   saveFantasyProsKeyButton: document.querySelector("#saveFantasyProsKeyButton"),
   importCsvButton: document.querySelector("#importCsvButton"),
   syncFantasyProsButton: document.querySelector("#syncFantasyProsButton"),
+  debugFantasyProsButton: document.querySelector("#debugFantasyProsButton"),
   syncAllFantasyProsButton: document.querySelector("#syncAllFantasyProsButton"),
   manualWatchNameInput: document.querySelector("#manualWatchNameInput"),
   manualWatchPositionInput: document.querySelector("#manualWatchPositionInput"),
@@ -117,6 +118,7 @@ function bindEvents() {
   elements.importCsvButton.addEventListener("click", importCsv);
   elements.saveFantasyProsKeyButton.addEventListener("click", saveFantasyProsKey);
   elements.syncFantasyProsButton.addEventListener("click", syncFantasyPros);
+  elements.debugFantasyProsButton.addEventListener("click", debugFantasyPros);
   elements.syncAllFantasyProsButton.addEventListener("click", syncAllFantasyPros);
   elements.addManualWatchButton.addEventListener("click", addManualWatchlistPlayer);
 }
@@ -572,12 +574,51 @@ async function syncFantasyPros() {
   }
 }
 
+async function debugFantasyPros() {
+  const season = prompt("FantasyPros season/year?", String(new Date().getFullYear()));
+  if (!season) {
+    return;
+  }
+  const position = prompt("Position to test? Use a real position like C, OF, QB, PG.", getDefaultPositionForSport(currentSport));
+  if (!position) {
+    return;
+  }
+
+  try {
+    const result = await requestJson("/api/debug/fantasypros", {
+      method: "POST",
+      body: JSON.stringify({
+        sport: currentSport,
+        boardType: currentBoard,
+        season: Number(season),
+        position,
+      }),
+    });
+    const lines = result.tests
+      .slice(0, 12)
+      .map((test) => `${test.endpoint} / ${test.auth} / ${test.keySource}: ${test.status} ${test.ok ? "OK" : summarizeSyncError(test.bodySnippet)}`);
+    alert(lines.join("\n"));
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+function getDefaultPositionForSport(sport) {
+  return {
+    HOCKEY: "C",
+    BASEBALL: "OF",
+    FOOTBALL: "QB",
+    BASKETBALL: "PG",
+    GOLF: "ALL",
+  }[sport] ?? "ALL";
+}
+
 async function syncAllFantasyPros() {
   const season = prompt("FantasyPros season/year for every sport and board?", String(new Date().getFullYear()));
   if (!season) {
     return;
   }
-  const confirmed = confirm("This will sync Hockey, Baseball, Football, and Basketball across both ranking boards. Golf is skipped for now. Continue?");
+  const confirmed = confirm("This will sync consensus rankings by position for Hockey, Baseball, Football, and Basketball across both boards. This can use many FantasyPros API calls. Continue?");
   if (!confirmed) {
     return;
   }

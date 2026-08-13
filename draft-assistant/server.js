@@ -15,6 +15,13 @@ const FANTASYPROS_BATCH_SPORTS = ["HOCKEY", "BASEBALL", "FOOTBALL", "BASKETBALL"
 const BOARDS = ["redraft", "dynasty"];
 const DEFAULT_RANKING_LIMIT = 500;
 const FANTASYPROS_BATCH_DELAY_MS = 900;
+const FANTASYPROS_CONSENSUS_POSITIONS = {
+  HOCKEY: ["C", "LW", "RW", "D", "G"],
+  BASEBALL: ["C", "1B", "2B", "3B", "SS", "OF", "SP", "RP"],
+  FOOTBALL: ["QB", "RB", "WR", "TE", "DST"],
+  BASKETBALL: ["PG", "SG", "SF", "PF", "C"],
+  GOLF: ["ALL"],
+};
 
 const defaultState = {
   players: [],
@@ -78,6 +85,24 @@ const server = createServer(async (request, response) => {
       state.settings.integrations.fantasyProsApiKey = String(payload.apiKey ?? "").trim();
       await saveState(state);
       return json(response, sanitizeStateForClient(state));
+    }
+
+    if (request.method === "DELETE" && url.pathname === "/api/settings/fantasypros-key") {
+      const state = await loadState();
+      state.settings.integrations.fantasyProsApiKey = "";
+      await saveState(state);
+      return json(response, sanitizeStateForClient(state));
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/debug/fantasypros") {
+      const payload = await readJson(request);
+      const state = await loadState();
+      const sport = normalizeSport(payload.sport);
+      const boardType = normalizeBoardType(payload.boardType);
+      const season = Number(payload.season ?? new Date().getFullYear());
+      const position = String(payload.position ?? "ALL").toUpperCase();
+      const diagnostics = await runFantasyProsDiagnostics({ state, sport, boardType, season, position });
+      return json(response, diagnostics);
     }
 
     if (request.method === "POST" && url.pathname === "/api/import/csv") {
@@ -170,31 +195,33 @@ const server = createServer(async (request, response) => {
 
       for (const sport of FANTASYPROS_BATCH_SPORTS) {
         for (const boardType of BOARDS) {
-          await delay(FANTASYPROS_BATCH_DELAY_MS);
-          try {
-            const result = await fetchFantasyProsRankings({
-              sport,
-              boardType,
-              season,
-              position,
-              limit,
-              apiKey: getFantasyProsApiKey(state),
-            });
-            state.players = mergePlayers(state.players, result.players);
-            results.push({
-              sport,
-              boardType,
-              position,
-              imported: result.players.length,
-              endpoint: result.endpoint,
-            });
-          } catch (error) {
-            failures.push({
-              sport,
-              boardType,
-              position,
-              error: error instanceof Error ? error.message : "Sync failed.",
-            });
+          for (const requestPosition of getFantasyProsConsensusPositions(sport, position)) {
+            await delay(FANTASYPROS_BATCH_DELAY_MS);
+            try {
+              const result = await fetchFantasyProsRankings({
+                sport,
+                boardType,
+                season,
+                position: requestPosition,
+                limit,
+                apiKey: getFantasyProsApiKey(state),
+              });
+              state.players = mergePlayers(state.players, result.players);
+              results.push({
+                sport,
+                boardType,
+                position: requestPosition,
+                imported: result.players.length,
+                endpoint: result.endpoint,
+              });
+            } catch (error) {
+              failures.push({
+                sport,
+                boardType,
+                position: requestPosition,
+                error: error instanceof Error ? error.message : "Sync failed.",
+              });
+            }
           }
         }
       }
@@ -306,6 +333,25 @@ function sanitizeStateForClient(state) {
 
 function getFantasyProsApiKey(state) {
   return state.settings.integrations.fantasyProsApiKey || process.env.FANTASYPROS_API_KEY || "";
+}
+
+function getFantasyProsApiKeyOptions(state) {
+  const options = [];
+  if (state.settings.integrations.fantasyProsApiKey) {
+    options.push({
+      source: "local",
+      apiKey: state.settings.integrations.fantasyProsApiKey,
+      keyLength: state.settings.integrations.fantasyProsApiKey.length,
+    });
+  }
+  if (process.env.FANTASYPROS_API_KEY && process.env.FANTASYPROS_API_KEY !== state.settings.integrations.fantasyProsApiKey) {
+    options.push({
+      source: "env",
+      apiKey: process.env.FANTASYPROS_API_KEY,
+      keyLength: process.env.FANTASYPROS_API_KEY.length,
+    });
+  }
+  return options;
 }
 
 function normalizePlayerRecord(player) {
@@ -553,69 +599,35 @@ function delay(milliseconds) {
   });
 }
 
+function getFantasyProsConsensusPositions(sport, requestedPosition) {
+  if (requestedPosition !== "ALL") {
+    return [requestedPosition];
+  }
+
+  return FANTASYPROS_CONSENSUS_POSITIONS[sport] ?? ["ALL"];
+}
+
 async function fetchFantasyProsRankings({ sport, boardType, season, position, limit = DEFAULT_RANKING_LIMIT, apiKey }) {
   if (!apiKey) {
     throw new Error("Save a FantasyPros API key in the assistant settings or set FANTASYPROS_API_KEY before syncing rankings.");
   }
 
-  const attempts = [
-    () => fetchFantasyProsBroadRankings({ apiKey, sport, boardType, season, position, limit }),
-    () => fetchFantasyProsConsensusRankings({ apiKey, sport, boardType, season, position, limit }),
-    () => fetchFantasyProsPlayerPool({ apiKey, sport, boardType, position, limit }),
-  ];
-  const errors = [];
-
-  for (const attempt of attempts) {
-    try {
-      return await attempt();
-    } catch (error) {
-      errors.push(error instanceof Error ? error.message : "FantasyPros sync failed.");
-    }
-  }
-
-  throw new Error(errors.join(" | "));
+  return fetchFantasyProsConsensusRankings({ apiKey, sport, boardType, season, position });
 }
 
-async function fetchFantasyProsBroadRankings({ apiKey, sport, boardType, season, position, limit }) {
+async function fetchFantasyProsConsensusRankings({ apiKey, sport, boardType, season, position }) {
   const sportPath = getFantasyProsSportPath(sport);
-  const rankingType = getFantasyProsRankingType(boardType);
+  const rankingType = boardType === "dynasty" ? "dynasty" : "draft";
   const params = new URLSearchParams({
-    ranking_type: rankingType,
-    type: rankingType,
-    scoring: "HALF",
-    position: position === "ALL" ? "" : position,
-    limit: String(limit),
-    per_page: String(limit),
-  });
-  removeBlankSearchParams(params);
-  const endpoint = `https://api.fantasypros.com/public/v2/json/${sportPath}/${season}/rankings?${params.toString()}`;
-  return fetchFantasyProsEndpoint({ endpoint, apiKey, sport, boardType, source: "FantasyPros Rankings" });
-}
-
-async function fetchFantasyProsConsensusRankings({ apiKey, sport, boardType, season, position, limit }) {
-  const sportPath = getFantasyProsSportPath(sport);
-  const rankingType = boardType === "dynasty" ? "dynasty" : "consensus";
-  const params = new URLSearchParams({
-    type: rankingType,
     position,
-    limit: String(limit),
+    type: rankingType,
   });
+  if (sport === "FOOTBALL") {
+    params.set("scoring", "HALF");
+  }
   removeBlankSearchParams(params);
   const endpoint = `https://api.fantasypros.com/public/v2/json/${sportPath}/${season}/consensus-rankings?${params.toString()}`;
   return fetchFantasyProsEndpoint({ endpoint, apiKey, sport, boardType, source: "FantasyPros Consensus" });
-}
-
-async function fetchFantasyProsPlayerPool({ apiKey, sport, boardType, position, limit }) {
-  const sportPath = getFantasyProsSportPath(sport);
-  const params = new URLSearchParams({
-    ecr: "included",
-    show: "pos_rank",
-    position: position === "ALL" ? "" : position,
-    limit: String(limit),
-  });
-  removeBlankSearchParams(params);
-  const endpoint = `https://api.fantasypros.com/public/v2/json/${sportPath}/players?${params.toString()}`;
-  return fetchFantasyProsEndpoint({ endpoint, apiKey, sport, boardType, source: "FantasyPros Players" });
 }
 
 async function fetchFantasyProsEndpoint({ endpoint, apiKey, sport, boardType, source }) {
@@ -654,6 +666,89 @@ async function fetchFantasyProsEndpoint({ endpoint, apiKey, sport, boardType, so
   };
 }
 
+async function runFantasyProsDiagnostics({ state, sport, boardType, season, position }) {
+  const keyOptions = getFantasyProsApiKeyOptions(state);
+  if (keyOptions.length === 0) {
+    return {
+      ok: false,
+      message: "No FantasyPros key is saved locally or set in FANTASYPROS_API_KEY.",
+      tests: [],
+    };
+  }
+
+  const sportPath = getFantasyProsSportPath(sport);
+  const rankingType = boardType === "dynasty" ? "dynasty" : "draft";
+  const endpointTests = [
+    {
+      name: "consensus-documented",
+      url: `https://api.fantasypros.com/public/v2/json/${sportPath}/${season}/consensus-rankings?type=${encodeURIComponent(rankingType)}&position=${encodeURIComponent(position)}`,
+    },
+    {
+      name: "consensus-documented-scoring",
+      url: `https://api.fantasypros.com/public/v2/json/${sportPath}/${season}/consensus-rankings?type=${encodeURIComponent(rankingType)}&position=${encodeURIComponent(position)}&scoring=HALF`,
+    },
+    {
+      name: "consensus-consensus-type",
+      url: `https://api.fantasypros.com/public/v2/json/${sportPath}/${season}/consensus-rankings?type=consensus&position=${encodeURIComponent(position)}`,
+    },
+  ];
+  const authStyles = [
+    {
+      name: "x-api-key",
+      headers: (apiKey) => ({ "x-api-key": apiKey, Accept: "application/json" }),
+    },
+    {
+      name: "authorization-bearer",
+      headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}`, Accept: "application/json" }),
+    },
+    {
+      name: "subscription-key",
+      headers: (apiKey) => ({ "Ocp-Apim-Subscription-Key": apiKey, Accept: "application/json" }),
+    },
+  ];
+  const tests = [];
+
+  for (const keyOption of keyOptions) {
+    for (const endpointTest of endpointTests) {
+      for (const authStyle of authStyles) {
+        const startedAt = Date.now();
+        try {
+          const response = await fetch(endpointTest.url, {
+            headers: authStyle.headers(keyOption.apiKey),
+          });
+          const body = await response.text();
+          tests.push({
+            keySource: keyOption.source,
+            keyLength: keyOption.keyLength,
+            endpoint: endpointTest.name,
+            auth: authStyle.name,
+            status: response.status,
+            ok: response.ok,
+            durationMs: Date.now() - startedAt,
+            bodySnippet: body.slice(0, 220),
+          });
+        } catch (error) {
+          tests.push({
+            keySource: keyOption.source,
+            keyLength: keyOption.keyLength,
+            endpoint: endpointTest.name,
+            auth: authStyle.name,
+            status: null,
+            ok: false,
+            durationMs: Date.now() - startedAt,
+            bodySnippet: error instanceof Error ? error.message : "Request failed.",
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    ok: tests.some((test) => test.ok),
+    tests,
+  };
+}
+
 function derivePlayerName(record) {
   return (
     record.player_name ??
@@ -676,10 +771,6 @@ function getFantasyProsSportPath(sport) {
     HOCKEY: "nhl",
     GOLF: "pga",
   }[sport];
-}
-
-function getFantasyProsRankingType(boardType) {
-  return boardType === "dynasty" ? "dynasty" : "draft";
 }
 
 function removeBlankSearchParams(params) {
