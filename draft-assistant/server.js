@@ -523,6 +523,25 @@ async function fetchFantasyProsRankings({ sport, boardType, season, position, li
     throw new Error("Set FANTASYPROS_API_KEY before syncing FantasyPros rankings.");
   }
 
+  const attempts = [
+    () => fetchFantasyProsBroadRankings({ apiKey, sport, boardType, season, position, limit }),
+    () => fetchFantasyProsConsensusRankings({ apiKey, sport, boardType, season, position, limit }),
+    () => fetchFantasyProsPlayerPool({ apiKey, sport, boardType, position, limit }),
+  ];
+  const errors = [];
+
+  for (const attempt of attempts) {
+    try {
+      return await attempt();
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : "FantasyPros sync failed.");
+    }
+  }
+
+  throw new Error(errors.join(" | "));
+}
+
+async function fetchFantasyProsBroadRankings({ apiKey, sport, boardType, season, position, limit }) {
   const sportPath = getFantasyProsSportPath(sport);
   const rankingType = getFantasyProsRankingType(boardType);
   const params = new URLSearchParams({
@@ -535,6 +554,36 @@ async function fetchFantasyProsRankings({ sport, boardType, season, position, li
   });
   removeBlankSearchParams(params);
   const endpoint = `https://api.fantasypros.com/public/v2/json/${sportPath}/${season}/rankings?${params.toString()}`;
+  return fetchFantasyProsEndpoint({ endpoint, apiKey, sport, boardType, source: "FantasyPros Rankings" });
+}
+
+async function fetchFantasyProsConsensusRankings({ apiKey, sport, boardType, season, position, limit }) {
+  const sportPath = getFantasyProsSportPath(sport);
+  const rankingType = boardType === "dynasty" ? "DYNASTY" : "DRAFT";
+  const params = new URLSearchParams({
+    type: rankingType,
+    position: position === "ALL" ? "" : position,
+    limit: String(limit),
+  });
+  removeBlankSearchParams(params);
+  const endpoint = `https://api.fantasypros.com/public/v2/json/${sportPath}/${season}/consensus-rankings?${params.toString()}`;
+  return fetchFantasyProsEndpoint({ endpoint, apiKey, sport, boardType, source: "FantasyPros Consensus" });
+}
+
+async function fetchFantasyProsPlayerPool({ apiKey, sport, boardType, position, limit }) {
+  const sportPath = getFantasyProsSportPath(sport);
+  const params = new URLSearchParams({
+    ecr: "included",
+    show: "pos_rank",
+    position: position === "ALL" ? "" : position,
+    limit: String(limit),
+  });
+  removeBlankSearchParams(params);
+  const endpoint = `https://api.fantasypros.com/public/v2/json/${sportPath}/players?${params.toString()}`;
+  return fetchFantasyProsEndpoint({ endpoint, apiKey, sport, boardType, source: "FantasyPros Players" });
+}
+
+async function fetchFantasyProsEndpoint({ endpoint, apiKey, sport, boardType, source }) {
   const response = await fetch(endpoint, {
     headers: {
       "x-api-key": apiKey,
@@ -543,7 +592,7 @@ async function fetchFantasyProsRankings({ sport, boardType, season, position, li
   });
 
   if (!response.ok) {
-    throw new Error(`FantasyPros sync failed (${response.status}): ${await response.text()}`);
+    throw new Error(`${source} failed (${response.status}): ${await response.text()}`);
   }
 
   const payload = await response.json();
@@ -553,8 +602,8 @@ async function fetchFantasyProsRankings({ sport, boardType, season, position, li
       displayName: derivePlayerName(record),
       sport,
       boardType,
-      source: "FantasyPros",
-      rank: Number(record.rank ?? record.overall_rank ?? record.overallRank ?? record.ecr ?? record.rank_ecr ?? record.rank_ave ?? record.player_rank ?? index + 1),
+      source,
+      rank: Number(record.rank ?? record.overall_rank ?? record.overallRank ?? record.ecr ?? record.rank_ecr ?? record.rank_ave ?? record.player_rank ?? record.pos_rank?.replace?.(/^[A-Z]+/i, "") ?? index + 1),
       position: String(derivePosition(record)),
       team: String(deriveTeam(record)),
       tier: toNullableNumber(record.tier),
