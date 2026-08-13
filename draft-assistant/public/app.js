@@ -618,13 +618,13 @@ async function syncAllFantasyPros() {
   if (!season) {
     return;
   }
-  const confirmed = confirm("This will sync consensus rankings by position for Hockey, Baseball, Football, and Basketball across both boards. This can use many FantasyPros API calls. Continue?");
+  const confirmed = confirm("This will sync consensus rankings by position for Hockey, Baseball, Football, and Basketball across both boards. It uses about 46 FantasyPros API calls and spaces them out to stay under the 1 request/second limit, so it can take about 70 seconds. Continue?");
   if (!confirmed) {
     return;
   }
 
   elements.syncAllFantasyProsButton.disabled = true;
-  elements.syncAllFantasyProsButton.textContent = "Syncing boards...";
+  elements.syncAllFantasyProsButton.textContent = "Syncing boards slowly...";
 
   try {
     const result = await requestJson("/api/sync/fantasypros/all", {
