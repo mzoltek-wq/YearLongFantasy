@@ -192,10 +192,22 @@ const server = createServer(async (request, response) => {
       const state = await loadState();
       const results = [];
       const failures = [];
+      let hitFantasyProsLimit = false;
 
       for (const sport of FANTASYPROS_BATCH_SPORTS) {
         for (const boardType of BOARDS) {
           for (const requestPosition of getFantasyProsConsensusPositions(sport, position)) {
+            if (hitFantasyProsLimit) {
+              failures.push({
+                sport,
+                boardType,
+                position: requestPosition,
+                error: "Skipped because FantasyPros returned Limit Exceeded earlier in this batch.",
+                skipped: true,
+              });
+              continue;
+            }
+
             await delay(FANTASYPROS_BATCH_DELAY_MS);
             try {
               const result = await fetchFantasyProsRankings({
@@ -215,12 +227,16 @@ const server = createServer(async (request, response) => {
                 endpoint: result.endpoint,
               });
             } catch (error) {
+              const message = error instanceof Error ? error.message : "Sync failed.";
               failures.push({
                 sport,
                 boardType,
                 position: requestPosition,
-                error: error instanceof Error ? error.message : "Sync failed.",
+                error: message,
               });
+              if (isFantasyProsLimitError(message)) {
+                hitFantasyProsLimit = true;
+              }
             }
           }
         }
@@ -233,6 +249,7 @@ const server = createServer(async (request, response) => {
         imported: results.reduce((total, result) => total + result.imported, 0),
         requestCount: results.length + failures.length,
         limit,
+        hitFantasyProsLimit,
         results,
         failures,
         at: new Date().toISOString(),
@@ -597,6 +614,10 @@ function delay(milliseconds) {
   return new Promise((resolve) => {
     setTimeout(resolve, milliseconds);
   });
+}
+
+function isFantasyProsLimitError(message) {
+  return /limit exceeded|too many requests|429/i.test(String(message ?? ""));
 }
 
 function getFantasyProsConsensusPositions(sport, requestedPosition) {

@@ -643,8 +643,12 @@ async function syncAllFantasyPros() {
     }
     render();
     const imported = result.results.reduce((total, entry) => total + entry.imported, 0);
-    const failureSummary = result.failures.length ? `\n\nFirst failure: ${summarizeSyncError(result.failures[0].error)}` : "";
-    alert(`FantasyPros batch sync complete. Imported ${imported} players. Failures: ${result.failures.length}.${failureSummary}`);
+    const remaining = result.failures.map((failure) => `${failure.sport} ${failure.boardType} ${failure.position}`).slice(0, 8).join(", ");
+    const limitText = result.failures.some((failure) => /limit exceeded|too many requests|429/i.test(failure.error))
+      ? `\n\nFantasyPros hit a limit. The imported players were saved. Retry remaining positions later${remaining ? `: ${remaining}` : "."}`
+      : "";
+    const failureSummary = result.failures.length && !limitText ? `\n\nFirst failure: ${summarizeSyncError(result.failures[0].error)}` : "";
+    alert(`FantasyPros batch sync complete. Imported ${imported} players. Failures: ${result.failures.length}.${limitText}${failureSummary}`);
   } catch (error) {
     alert(error.message);
   } finally {
