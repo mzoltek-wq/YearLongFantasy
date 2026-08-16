@@ -6,6 +6,7 @@ import { IntegrationType, Owner, Sport } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
 import { DEFAULT_TOTAL_ROUNDS } from "@/lib/constants/league";
+import { interpretFullKeeperGrid } from "@/lib/keepers/full-grid";
 import { ParsedKeeperTextEntry, parseKeeperText } from "@/lib/keepers/import";
 import { buildSnakeDraftOrder, normalizePlayerName, parseSportFromValue } from "@/lib/utils/draft";
 
@@ -180,39 +181,6 @@ async function applyGridKeeperEntry({
       },
     }),
   ]);
-}
-
-function getOwnerCodeFromRawValue(rawValue: string, ownerByCode: Map<string, Owner>) {
-  for (const match of rawValue.matchAll(/\(([A-Z]{2})\)/gi)) {
-    const code = match[1]?.toUpperCase();
-    if (code && ownerByCode.has(code)) {
-      return code;
-    }
-  }
-
-  return null;
-}
-
-function normalizeOwnerHeader(value: string) {
-  return value
-    .replace(/[^a-z0-9]/gi, "")
-    .trim()
-    .toLowerCase();
-}
-
-function resolveOwnerHeaderOwner(value: string, owners: Owner[]) {
-  const normalizedValue = normalizeOwnerHeader(value);
-
-  if (!normalizedValue) {
-    return null;
-  }
-
-  return (
-    owners.find((owner) => normalizeOwnerHeader(owner.name) === normalizedValue) ??
-    owners.find((owner) => normalizedValue.startsWith(normalizeOwnerHeader(owner.name))) ??
-    owners.find((owner) => normalizeOwnerHeader(owner.name).startsWith(normalizedValue)) ??
-    null
-  );
 }
 
 function getOwnerScopedImportRecordWhere(ownerId: string) {
@@ -477,16 +445,7 @@ export async function importFullKeeperGridText(formData: FormData) {
       prisma.rosterLimit.findMany(),
     ]);
     const ownerByCode = new Map(ownerCodes.map((code) => [code.code.toUpperCase(), code.owner]));
-    const rows = input.split(/\r?\n/).map((row) => row.split("\t").map((cell) => cell.trim()));
-    const headerIndex = rows.findIndex((row) => row.filter((cell) => resolveOwnerHeaderOwner(cell, owners)).length >= 2);
-
-    if (headerIndex === -1) {
-      throw new Error("Could not find an owner header row in the pasted keeper grid.");
-    }
-
-    const ownerColumns = rows[headerIndex]
-      .map((cell, index) => ({ owner: resolveOwnerHeaderOwner(cell, owners), index }))
-      .filter((entry): entry is { owner: Owner; index: number } => Boolean(entry.owner));
+    const { rows, headerIndex, ownerColumns, interpretations } = interpretFullKeeperGrid(input, owners, ownerByCode);
     const rosterTotalRounds = rosterLimits.reduce((total, limit) => total + limit.perOwnerLimit, 0);
     const targetTotalRounds = Math.max(DEFAULT_TOTAL_ROUNDS, rosterTotalRounds);
     let activeDraftSlots = draftSlots;
@@ -552,6 +511,16 @@ export async function importFullKeeperGridText(formData: FormData) {
       ownerCode: string | null;
       rawValue: string;
     }> = [];
+    const gridInterpretations: Array<{
+      type: "keeper" | "pick";
+      round: number;
+      originalPickOwner: string;
+      currentOwner: string;
+      ownerCode: string | null;
+      playerName: string | null;
+      keeperTag: string | null;
+      rawValue: string;
+    }> = [];
 
     await prisma.keeper.deleteMany();
     await prisma.importedRecord.deleteMany({
@@ -582,18 +551,8 @@ export async function importFullKeeperGridText(formData: FormData) {
       );
     }
 
-    const rawPlayerNames: string[] = [];
-    for (let rowIndex = headerIndex + 1; rowIndex < rows.length; rowIndex += 1) {
-      const row = rows[rowIndex];
-      const explicitRound = Number(row[0]);
-      const round = Number.isInteger(explicitRound) && explicitRound > 0 ? explicitRound : rowIndex - headerIndex;
-
-      for (const ownerColumn of ownerColumns) {
-        const rawValue = row[ownerColumn.index] ?? "";
-        const parsedEntries = parseKeeperText(`${round} ${rawValue}`).filter((entry) => entry.playerName);
-        rawPlayerNames.push(...parsedEntries.map((entry) => entry.playerName!).filter(Boolean));
-      }
-    }
+    const keeperInterpretations = interpretations.filter((interpretation) => interpretation.type === "keeper" && interpretation.entry);
+    const rawPlayerNames = keeperInterpretations.map((interpretation) => interpretation.entry!.playerName);
 
     const existingPlayers = await prisma.player.findMany({
       where: {
@@ -604,151 +563,126 @@ export async function importFullKeeperGridText(formData: FormData) {
     });
     const playerByNormalizedName = new Map(existingPlayers.map((player) => [player.normalizedName, player]));
 
-    for (let rowIndex = headerIndex + 1; rowIndex < rows.length; rowIndex += 1) {
-      const row = rows[rowIndex];
-      const explicitRound = Number(row[0]);
-      const round = Number.isInteger(explicitRound) && explicitRound > 0 ? explicitRound : rowIndex - headerIndex;
+    for (const interpretation of interpretations) {
+      nonEmptyCellCount += 1;
 
-      for (const ownerColumn of ownerColumns) {
-        const rawValue = row[ownerColumn.index] ?? "";
-        if (!rawValue) {
-          continue;
-        }
-        nonEmptyCellCount += 1;
+      if (interpretation.round > targetTotalRounds) {
+        issues.push({
+          owner: interpretation.currentOwner as Owner,
+          entry: {
+            round: interpretation.round,
+            rawValue: interpretation.rawValue,
+            playerName: interpretation.entry?.playerName ?? null,
+            sport: null,
+            keeperTag: interpretation.entry?.keeperTag ?? null,
+            invalidKeeperTags: interpretation.entry?.invalidKeeperTags ?? [],
+            pickOwnerCode: interpretation.ownerCode,
+          },
+          reason: `Round ${interpretation.round} is outside the configured ${targetTotalRounds}-round draft.`,
+        });
+        continue;
+      }
 
-        if (round > targetTotalRounds) {
-          issues.push({
-            owner: ownerColumn.owner,
-            entry: {
-              round,
-              rawValue,
-              playerName: null,
-              sport: null,
-              keeperTag: null,
-              invalidKeeperTags: [],
-              pickOwnerCode: null,
-            },
-            reason: `Round ${round} is outside the configured ${targetTotalRounds}-round draft.`,
+      const slot = slotByRoundAndDefaultOwner.get(`${interpretation.round}:${interpretation.originalPickOwner.id}`);
+      if (!slot) {
+        issues.push({
+          owner: interpretation.currentOwner as Owner,
+          entry: {
+            round: interpretation.round,
+            rawValue: interpretation.rawValue,
+            playerName: interpretation.entry?.playerName ?? null,
+            sport: null,
+            keeperTag: interpretation.entry?.keeperTag ?? null,
+            invalidKeeperTags: interpretation.entry?.invalidKeeperTags ?? [],
+            pickOwnerCode: interpretation.ownerCode,
+          },
+          reason: `Could not find ${interpretation.originalPickOwner.name}'s pick in round ${interpretation.round}.`,
+        });
+        continue;
+      }
+
+      const appliedOverrideCode = interpretation.currentOwner.id === interpretation.originalPickOwner.id ? null : interpretation.currentOwner.code;
+      if (appliedOverrideCode) {
+        await prisma.draftSlot.update({
+          where: { id: slot.id },
+          data: {
+            currentOwnerId: interpretation.currentOwner.id,
+            overrideOwnerCode: appliedOverrideCode,
+          },
+        });
+      }
+
+      gridInterpretations.push({
+        type: interpretation.type,
+        round: interpretation.round,
+        originalPickOwner: interpretation.originalPickOwner.name,
+        currentOwner: interpretation.currentOwner.name,
+        ownerCode: interpretation.ownerCode,
+        playerName: interpretation.entry?.playerName ?? null,
+        keeperTag: interpretation.entry?.keeperTag ?? null,
+        rawValue: interpretation.rawValue,
+      });
+
+      if (interpretation.type === "pick" || !interpretation.entry) {
+        continue;
+      }
+
+      const entry = interpretation.entry;
+      parsedPlayerEntryCount += 1;
+      const normalizedPlayerName = normalizePlayerName(entry.playerName);
+      if (seenPlayerNames.has(normalizedPlayerName)) {
+        issues.push({ owner: interpretation.currentOwner as Owner, entry, reason: `"${entry.playerName}" appears more than once in the full keeper grid.` });
+        continue;
+      }
+      seenPlayerNames.add(normalizedPlayerName);
+
+      if (entry.invalidKeeperTags.length > 0) {
+        issues.push({ owner: interpretation.currentOwner as Owner, entry, reason: `Invalid keeper tag ${entry.invalidKeeperTags.join(", ")}. Use K1, K2, K3, or K4.` });
+        continue;
+      }
+
+      if (!entry.keeperTag) {
+        skippedMissingKeeperTagCount += 1;
+        if (skippedMissingKeeperTagSamples.length < 12) {
+          skippedMissingKeeperTagSamples.push({
+            ownerName: interpretation.currentOwner.name,
+            round: interpretation.round,
+            rawValue: interpretation.rawValue,
+            parsedPlayerName: entry.playerName,
           });
-          continue;
         }
+        continue;
+      }
 
-        const currentOwnerCode = getOwnerCodeFromRawValue(rawValue, ownerByCode);
-        const pickOwner = ownerColumn.owner;
-        const currentOwner = currentOwnerCode ? ownerByCode.get(currentOwnerCode)! : ownerColumn.owner;
-        const appliedOverrideCode = currentOwner.id === pickOwner.id ? null : currentOwner.code;
-        const slot = slotByRoundAndDefaultOwner.get(`${round}:${pickOwner.id}`);
-        if (!slot) {
-          issues.push({
-            owner: currentOwner,
-            entry: {
-              round,
-              rawValue,
-              playerName: null,
-              sport: null,
-              keeperTag: null,
-              invalidKeeperTags: [],
-              pickOwnerCode: null,
-            },
-            reason: `Could not find ${pickOwner.name}'s pick in round ${round}.`,
-          });
-          continue;
-        }
+      const existingPlayer = playerByNormalizedName.get(normalizedPlayerName);
+      const sport = entry.sport ?? existingPlayer?.sport ?? fallbackSport;
+      if (!sport) {
+        issues.push({ owner: interpretation.currentOwner as Owner, entry, reason: "Missing sport and no player database match." });
+        continue;
+      }
 
-        if (appliedOverrideCode) {
-          await prisma.draftSlot.update({
-            where: { id: slot.id },
-            data: {
-              currentOwnerId: currentOwner.id,
-              overrideOwnerCode: appliedOverrideCode,
-            },
-          });
-        }
+      if (entry.keeperTag === "K4" && entry.round !== 3) {
+        issues.push({ owner: interpretation.currentOwner as Owner, entry, reason: "K4 keepers must be placed in round 3." });
+        continue;
+      }
 
-        const parsedEntries = parseKeeperText(`${round} ${rawValue}`).filter((entry) => entry.playerName);
-        parsedPlayerEntryCount += parsedEntries.length;
-        if (parsedEntries.length === 0) {
-          continue;
-        }
+      if (entry.keeperTag === "K4") {
+        k4CountByOwnerId.set(interpretation.currentOwner.id, (k4CountByOwnerId.get(interpretation.currentOwner.id) ?? 0) + 1);
+      }
 
-        if (parsedEntries.length > 1) {
-          issues.push({
-            owner: currentOwner,
-            entry: {
-              ...parsedEntries[0],
-              pickOwnerCode: currentOwnerCode,
-            },
-            reason: "This grid cell contains multiple players. One draft slot can only hold one keeper.",
-          });
-          continue;
-        }
-
-        const entry = {
-          ...parsedEntries[0],
-          pickOwnerCode: currentOwnerCode,
-        };
-
-        if (!entry.playerName) {
-          continue;
-        }
-
-        const normalizedPlayerName = normalizePlayerName(entry.playerName);
-        if (seenPlayerNames.has(normalizedPlayerName)) {
-          issues.push({ owner: currentOwner, entry, reason: `"${entry.playerName}" appears more than once in the full keeper grid.` });
-          continue;
-        }
-        seenPlayerNames.add(normalizedPlayerName);
-
-        if (entry.invalidKeeperTags.length > 0) {
-          issues.push({ owner: currentOwner, entry, reason: `Invalid keeper tag ${entry.invalidKeeperTags.join(", ")}. Use K1, K2, K3, or K4.` });
-          continue;
-        }
-
-        if (!entry.keeperTag) {
-          skippedMissingKeeperTagCount += 1;
-          if (skippedMissingKeeperTagSamples.length < 12) {
-            skippedMissingKeeperTagSamples.push({
-              ownerName: currentOwner.name,
-              round,
-              rawValue,
-              parsedPlayerName: entry.playerName,
-            });
-          }
-          continue;
-        }
-
-        const existingPlayer = playerByNormalizedName.get(normalizedPlayerName);
-        const sport = entry.sport ?? existingPlayer?.sport ?? fallbackSport;
-        if (!sport) {
-          issues.push({ owner: currentOwner, entry, reason: "Missing sport and no player database match." });
-          continue;
-        }
-
-        if (entry.keeperTag === "K4" && entry.round !== 3) {
-          issues.push({ owner: currentOwner, entry, reason: "K4 keepers must be placed in round 3." });
-          continue;
-        }
-
-        if (entry.keeperTag === "K4") {
-          k4CountByOwnerId.set(currentOwner.id, (k4CountByOwnerId.get(currentOwner.id) ?? 0) + 1);
-        }
-
-        try {
-          await applyGridKeeperEntry({ slotId: slot.id, owner: currentOwner, overrideOwnerCode: appliedOverrideCode, entry, sport });
-          importedCountByOwnerId.set(currentOwner.id, (importedCountByOwnerId.get(currentOwner.id) ?? 0) + 1);
-          if (placementSamples.length < 30) {
-            placementSamples.push({
-              playerName: entry.playerName,
-              round,
-              originalPickOwner: pickOwner.name,
-              assignedOwner: currentOwner.name,
-              ownerCode: currentOwnerCode,
-              rawValue,
-            });
-          }
-        } catch (error) {
-          issues.push({ owner: currentOwner, entry, reason: error instanceof Error ? error.message : "Could not place this keeper." });
-        }
+      try {
+        await applyGridKeeperEntry({ slotId: slot.id, owner: interpretation.currentOwner as Owner, overrideOwnerCode: appliedOverrideCode, entry, sport });
+        importedCountByOwnerId.set(interpretation.currentOwner.id, (importedCountByOwnerId.get(interpretation.currentOwner.id) ?? 0) + 1);
+        placementSamples.push({
+          playerName: entry.playerName,
+          round: interpretation.round,
+          originalPickOwner: interpretation.originalPickOwner.name,
+          assignedOwner: interpretation.currentOwner.name,
+          ownerCode: interpretation.ownerCode,
+          rawValue: interpretation.rawValue,
+        });
+      } catch (error) {
+        issues.push({ owner: interpretation.currentOwner as Owner, entry, reason: error instanceof Error ? error.message : "Could not place this keeper." });
       }
     }
 
@@ -893,6 +827,7 @@ export async function importFullKeeperGridText(formData: FormData) {
           skippedMissingKeeperTagSamples,
           topIssueReasons,
           placementSamples,
+          gridInterpretations,
           importedCountByOwner: owners.map((owner) => ({
             ownerId: owner.id,
             ownerName: owner.name,

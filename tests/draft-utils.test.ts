@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { Sport } from "@prisma/client";
 
+import { OWNER_CODES, OWNER_NAMES } from "@/lib/constants/league";
+import { interpretFullKeeperGrid } from "@/lib/keepers/full-grid";
 import {
   buildSnakeDraftOrder,
   findDuplicateNormalizedNames,
@@ -11,6 +15,8 @@ import {
 } from "@/lib/utils/draft";
 import { parseKeeperText } from "@/lib/keepers/import";
 import { calculateRosterTotals, validateLeagueTotals } from "@/lib/validation/draft";
+
+const fixturePath = fileURLToPath(new URL("./fixtures/keeper-grid-2026.tsv", import.meta.url));
 
 test("builds snake order correctly", () => {
   const order = buildSnakeDraftOrder(["A", "B", "C"], 2);
@@ -85,6 +91,60 @@ test("treats franchise tag as fourth-year keeper", () => {
 
   assert.equal(entry.keeperTag, "K4");
   assert.deepEqual(entry.invalidKeeperTags, []);
+});
+
+test("interprets full keeper grid ownership from pasted sheet", () => {
+  const owners = OWNER_NAMES.map((name) => ({
+    id: name,
+    name,
+    code: OWNER_CODES[name],
+  }));
+  const ownerByCode = new Map(owners.map((owner) => [owner.code, owner]));
+  const input = readFileSync(fixturePath, "utf8");
+  const { ownerColumns, interpretations } = interpretFullKeeperGrid(input, owners, ownerByCode);
+  const keeperInterpretations = interpretations.filter((entry) => entry.type === "keeper");
+  const pickInterpretations = interpretations.filter((entry) => entry.type === "pick");
+
+  assert.equal(ownerColumns.length, 10);
+  assert.equal(keeperInterpretations.length, 253);
+  assert.equal(pickInterpretations.length, 74);
+
+  const findKeeper = (playerName: string) => {
+    const found = keeperInterpretations.find((entry) => entry.entry?.playerName === playerName);
+    assert.ok(found, `Expected to find keeper ${playerName}`);
+    return found;
+  };
+
+  const caleMakar = findKeeper("Cale Makar");
+  assert.equal(caleMakar.round, 4);
+  assert.equal(caleMakar.originalPickOwner.name, "Matt");
+  assert.equal(caleMakar.currentOwner.name, "Zolt");
+  assert.equal(caleMakar.entry?.keeperTag, "K3");
+
+  const scottieBarnes = findKeeper("Scottie Barnes");
+  assert.equal(scottieBarnes.round, 6);
+  assert.equal(scottieBarnes.originalPickOwner.name, "Mac");
+  assert.equal(scottieBarnes.currentOwner.name, "Zolt");
+
+  const jonathanTaylor = findKeeper("Jonathan Taylor");
+  assert.equal(jonathanTaylor.round, 6);
+  assert.equal(jonathanTaylor.originalPickOwner.name, "Jimbo");
+  assert.equal(jonathanTaylor.currentOwner.name, "Mac");
+
+  const paulSkenes = findKeeper("Paul Skenes");
+  assert.equal(paulSkenes.round, 21);
+  assert.equal(paulSkenes.originalPickOwner.name, "Zolt");
+  assert.equal(paulSkenes.currentOwner.name, "Joe");
+  assert.equal(paulSkenes.entry?.keeperTag, "K3");
+
+  const wyattJohnston = findKeeper("Wyatt Johnston");
+  assert.equal(wyattJohnston.round, 73);
+  assert.equal(wyattJohnston.originalPickOwner.name, "Sandler");
+  assert.equal(wyattJohnston.currentOwner.name, "Joe");
+  assert.equal(wyattJohnston.entry?.keeperTag, "K3");
+
+  const zoltRound57Pick = pickInterpretations.find((entry) => entry.round === 57 && entry.originalPickOwner.name === "Zolt");
+  assert.equal(zoltRound57Pick?.currentOwner.name, "Hoff");
 });
 
 test("calculates roster totals and validates league totals", () => {

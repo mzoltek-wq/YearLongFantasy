@@ -85,6 +85,16 @@ type KeeperFullGridImportLogPayload = {
     ownerCode?: string | null;
     rawValue?: string;
   }>;
+  gridInterpretations?: Array<{
+    type?: "keeper" | "pick";
+    round?: number;
+    originalPickOwner?: string;
+    currentOwner?: string;
+    ownerCode?: string | null;
+    playerName?: string | null;
+    keeperTag?: string | null;
+    rawValue?: string;
+  }>;
   importedCountByOwner?: Array<{
     ownerId?: string;
     ownerName?: string;
@@ -304,6 +314,45 @@ export async function KeeperWorkspace({
                         <p className="mt-1 text-xs text-[var(--muted)]">{entry.rawValue}</p>
                       </div>
                     ))}
+                  </div>
+                </details>
+              ) : null}
+
+              {latestFullGridImportLogPayload.gridInterpretations && latestFullGridImportLogPayload.gridInterpretations.length > 0 ? (
+                <details className="mt-3 rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm">
+                  <summary className="cursor-pointer font-semibold">
+                    Show all interpreted grid cells ({latestFullGridImportLogPayload.gridInterpretations.length})
+                  </summary>
+                  <div className="mt-3 max-h-96 overflow-auto rounded-xl border border-[var(--border)]">
+                    <table className="min-w-full text-left text-xs">
+                      <thead className="sticky top-0 bg-[var(--surface-strong)]">
+                        <tr>
+                          <th className="px-3 py-2">Round</th>
+                          <th className="px-3 py-2">Type</th>
+                          <th className="px-3 py-2">Original pick</th>
+                          <th className="px-3 py-2">Current owner</th>
+                          <th className="px-3 py-2">Player</th>
+                          <th className="px-3 py-2">Tag</th>
+                          <th className="px-3 py-2">Raw</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {latestFullGridImportLogPayload.gridInterpretations.map((entry, index) => (
+                          <tr className="border-t border-[var(--border)]" key={`${entry.round}-${entry.originalPickOwner}-${entry.currentOwner}-${index}`}>
+                            <td className="px-3 py-2 font-semibold">{entry.round ?? "?"}</td>
+                            <td className="px-3 py-2">{entry.type ?? "?"}</td>
+                            <td className="px-3 py-2">{entry.originalPickOwner ?? "?"}</td>
+                            <td className="px-3 py-2">
+                              {entry.currentOwner ?? "?"}
+                              {entry.ownerCode ? ` (${entry.ownerCode})` : ""}
+                            </td>
+                            <td className="px-3 py-2">{entry.playerName ?? "Pick only"}</td>
+                            <td className="px-3 py-2">{entry.keeperTag ?? "-"}</td>
+                            <td className="px-3 py-2 text-[var(--muted)]">{entry.rawValue ?? ""}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </details>
               ) : null}
