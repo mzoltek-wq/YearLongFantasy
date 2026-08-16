@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { Sport } from "@prisma/client";
+import { IntegrationType, Sport } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
 import {
@@ -15,8 +15,32 @@ import {
 } from "@/lib/import/google-sheets";
 import { normalizePlayerName } from "@/lib/utils/draft";
 
+const DRAFT_STATE_SNAPSHOT_SOURCE_ID = "draft-state-snapshot-source";
+const START_2026_SNAPSHOT_KEY = "draft-state-snapshot:start-2026";
+
 function revalidateAdminViews() {
-  ["/admin", "/draft", "/dashboard", "/owners", "/keepers", "/tracker"].forEach((path) => revalidatePath(path));
+  ["/admin", "/draft", "/dashboard", "/owners", "/keepers", "/tracker", "/league-view", "/rosters", "/league/2026/grid"].forEach((path) => revalidatePath(path));
+}
+
+async function getDraftStateSnapshotSource() {
+  return prisma.integrationSource.upsert({
+    where: { id: DRAFT_STATE_SNAPSHOT_SOURCE_ID },
+    update: {
+      type: IntegrationType.MANUAL_ENTRY,
+      isActive: true,
+      config: { adapter: "DraftStateSnapshot" },
+    },
+    create: {
+      id: DRAFT_STATE_SNAPSHOT_SOURCE_ID,
+      type: IntegrationType.MANUAL_ENTRY,
+      isActive: true,
+      config: { adapter: "DraftStateSnapshot" },
+    },
+  });
+}
+
+function serializeDate(value: Date | null | undefined) {
+  return value ? value.toISOString() : null;
 }
 
 export async function updateRosterLimits(formData: FormData) {
@@ -186,6 +210,384 @@ export async function updateOwnerName(formData: FormData) {
     revalidateAdminViews();
   } catch (error) {
     redirectPath = `/admin?status=error&message=${encodeURIComponent(error instanceof Error ? error.message : "Could not update owner.")}`;
+  }
+
+  redirect(redirectPath);
+}
+
+export async function saveStart2026DraftStateSnapshot() {
+  let redirectPath = "/admin?status=success&message=Saved%20start%20of%202026%20draft%20snapshot.";
+
+  try {
+    const source = await getDraftStateSnapshotSource();
+    const [draftSlots, keepers, settings, season] = await Promise.all([
+      prisma.draftSlot.findMany({
+        include: {
+          selectedPlayer: true,
+        },
+        orderBy: { overallPickNumber: "asc" },
+      }),
+      prisma.keeper.findMany({
+        include: {
+          player: true,
+          draftSlot: true,
+        },
+        orderBy: [{ ownerId: "asc" }, { playerName: "asc" }],
+      }),
+      prisma.leagueSettings.findFirst(),
+      prisma.leagueSeason.findFirst({
+        where: { year: 2026 },
+        include: {
+          drafts: {
+            orderBy: { createdAt: "asc" },
+            take: 1,
+            include: {
+              gridSlots: {
+                orderBy: { overallPickNumber: "asc" },
+                include: { player: true },
+              },
+            },
+          },
+        },
+      }),
+    ]);
+
+    const draftGridSlots = season?.drafts[0]?.gridSlots ?? [];
+    const savedAt = new Date().toISOString();
+
+    await prisma.importedRecord.deleteMany({
+      where: {
+        recordType: "draft_state_snapshot",
+        importKey: START_2026_SNAPSHOT_KEY,
+      },
+    });
+
+    await prisma.importedRecord.create({
+      data: {
+        integrationSourceId: source.id,
+        sourceType: IntegrationType.MANUAL_ENTRY,
+        recordType: "draft_state_snapshot",
+        importKey: START_2026_SNAPSHOT_KEY,
+        rawPayload: {
+          label: "Start of 2026",
+          savedAt,
+        },
+        normalizedPayload: {
+          label: "Start of 2026",
+          year: 2026,
+          savedAt,
+          settings: settings
+            ? {
+                expectedTotalPlayersPerOwner: settings.expectedTotalPlayersPerOwner,
+                totalRounds: settings.totalRounds,
+                currentDraftRound: settings.currentDraftRound,
+                currentDraftPick: settings.currentDraftPick,
+              }
+            : null,
+          draftSlots: draftSlots.map((slot) => ({
+            round: slot.round,
+            slotNumber: slot.slotNumber,
+            overallPickNumber: slot.overallPickNumber,
+            defaultOwnerId: slot.defaultOwnerId,
+            overrideOwnerCode: slot.overrideOwnerCode,
+            currentOwnerId: slot.currentOwnerId,
+            selectedPlayerName: slot.selectedPlayerName,
+            selectedSport: slot.selectedSport,
+            isKeeper: slot.isKeeper,
+            originalRawValue: slot.originalRawValue,
+            selectedAt: serializeDate(slot.selectedAt),
+            selectedPlayer: slot.selectedPlayer
+              ? {
+                  normalizedName: slot.selectedPlayer.normalizedName,
+                  displayName: slot.selectedPlayer.displayName,
+                  sport: slot.selectedPlayer.sport,
+                  metadata: slot.selectedPlayer.metadata,
+                }
+              : null,
+          })),
+          keepers: keepers.map((keeper) => ({
+            ownerId: keeper.ownerId,
+            playerName: keeper.playerName,
+            sport: keeper.sport,
+            tag: keeper.tag,
+            originalValue: keeper.originalValue,
+            draftSlotOverallPick: keeper.draftSlot?.overallPickNumber ?? null,
+            player: keeper.player
+              ? {
+                  normalizedName: keeper.player.normalizedName,
+                  displayName: keeper.player.displayName,
+                  sport: keeper.player.sport,
+                  metadata: keeper.player.metadata,
+                }
+              : null,
+          })),
+          draftGridSlots: draftGridSlots.map((slot) => ({
+            round: slot.round,
+            slotNumber: slot.slotNumber,
+            overallPickNumber: slot.overallPickNumber,
+            originalManagerId: slot.originalManagerId,
+            currentManagerId: slot.currentManagerId,
+            playerName: slot.playerName,
+            sport: slot.sport,
+            selectionType: slot.selectionType,
+            keeperStatus: slot.keeperStatus,
+            rawCellValue: slot.rawCellValue,
+            notes: slot.notes,
+            selectedAt: serializeDate(slot.selectedAt),
+            player: slot.player
+              ? {
+                  normalizedName: slot.player.normalizedName,
+                  displayName: slot.player.displayName,
+                  sport: slot.player.sport,
+                  metadata: slot.player.metadata,
+                }
+              : null,
+          })),
+        },
+      },
+    });
+
+    revalidateAdminViews();
+  } catch (error) {
+    redirectPath = `/admin?status=error&message=${encodeURIComponent(error instanceof Error ? error.message : "Could not save draft snapshot.")}`;
+  }
+
+  redirect(redirectPath);
+}
+
+export async function restoreStart2026DraftStateSnapshot() {
+  let redirectPath = "/admin?status=success&message=Restored%20start%20of%202026%20draft%20snapshot.";
+
+  try {
+    const snapshot = await prisma.importedRecord.findFirst({
+      where: {
+        recordType: "draft_state_snapshot",
+        importKey: START_2026_SNAPSHOT_KEY,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (!snapshot?.normalizedPayload || typeof snapshot.normalizedPayload !== "object" || Array.isArray(snapshot.normalizedPayload)) {
+      throw new Error("No start of 2026 snapshot has been saved yet.");
+    }
+
+    const payload = snapshot.normalizedPayload as {
+      settings?: {
+        expectedTotalPlayersPerOwner: number | null;
+        totalRounds: number;
+        currentDraftRound: number | null;
+        currentDraftPick: number | null;
+      } | null;
+      draftSlots?: Array<{
+        round: number;
+        slotNumber: number;
+        overallPickNumber: number;
+        defaultOwnerId: string;
+        overrideOwnerCode: string | null;
+        currentOwnerId: string;
+        selectedPlayerName: string | null;
+        selectedSport: Sport | null;
+        isKeeper: boolean;
+        originalRawValue: string | null;
+        selectedAt: string | null;
+        selectedPlayer?: {
+          normalizedName: string;
+          displayName: string;
+          sport: Sport;
+          metadata?: unknown;
+        } | null;
+      }>;
+      keepers?: Array<{
+        ownerId: string;
+        playerName: string;
+        sport: Sport;
+        tag: string | null;
+        originalValue: string | null;
+        draftSlotOverallPick: number | null;
+        player?: {
+          normalizedName: string;
+          displayName: string;
+          sport: Sport;
+          metadata?: unknown;
+        } | null;
+      }>;
+      draftGridSlots?: Array<{
+        overallPickNumber: number;
+        currentManagerId: string;
+        playerName: string | null;
+        sport: Sport | null;
+        selectionType: "OPEN" | "DRAFTED" | "KEEPER";
+        keeperStatus: "K1" | "K2" | "K3" | "K4" | null;
+        rawCellValue: string | null;
+        notes: string | null;
+        selectedAt: string | null;
+        player?: {
+          normalizedName: string;
+          displayName: string;
+          sport: Sport;
+          metadata?: unknown;
+        } | null;
+      }>;
+    };
+
+    const draftSlots = payload.draftSlots ?? [];
+    const draftGridSlots = payload.draftGridSlots ?? [];
+    const keepers = payload.keepers ?? [];
+
+    if (draftSlots.length === 0) {
+      throw new Error("The saved snapshot does not include draft slots.");
+    }
+
+    if (payload.settings) {
+      const existingSettings = await prisma.leagueSettings.findFirst();
+      if (existingSettings) {
+        await prisma.leagueSettings.update({
+          where: { id: existingSettings.id },
+          data: payload.settings,
+        });
+      } else {
+        await prisma.leagueSettings.create({
+          data: payload.settings,
+        });
+      }
+    }
+
+    await prisma.keeper.deleteMany();
+
+    for (const slot of draftSlots) {
+      const player =
+        slot.selectedPlayerName && slot.selectedSport
+          ? await prisma.player.upsert({
+              where: { normalizedName: slot.selectedPlayer?.normalizedName ?? normalizePlayerName(slot.selectedPlayerName) },
+              update: {
+                displayName: slot.selectedPlayer?.displayName ?? slot.selectedPlayerName,
+                sport: slot.selectedPlayer?.sport ?? slot.selectedSport,
+                metadata: slot.selectedPlayer?.metadata ?? undefined,
+              },
+              create: {
+                normalizedName: slot.selectedPlayer?.normalizedName ?? normalizePlayerName(slot.selectedPlayerName),
+                displayName: slot.selectedPlayer?.displayName ?? slot.selectedPlayerName,
+                sport: slot.selectedPlayer?.sport ?? slot.selectedSport,
+                metadata: slot.selectedPlayer?.metadata ?? undefined,
+              },
+            })
+          : null;
+
+      await prisma.draftSlot.update({
+        where: { overallPickNumber: slot.overallPickNumber },
+        data: {
+          round: slot.round,
+          slotNumber: slot.slotNumber,
+          defaultOwnerId: slot.defaultOwnerId,
+          overrideOwnerCode: slot.overrideOwnerCode,
+          currentOwnerId: slot.currentOwnerId,
+          selectedPlayerId: player?.id ?? null,
+          selectedPlayerName: slot.selectedPlayerName,
+          selectedSport: slot.selectedSport,
+          isKeeper: slot.isKeeper,
+          originalRawValue: slot.originalRawValue,
+          selectedAt: slot.selectedAt ? new Date(slot.selectedAt) : null,
+        },
+      });
+    }
+
+    const restoredDraftSlots = await prisma.draftSlot.findMany({
+      select: { id: true, overallPickNumber: true },
+    });
+    const draftSlotIdByOverallPick = new Map(restoredDraftSlots.map((slot) => [slot.overallPickNumber, slot.id]));
+
+    for (const keeper of keepers) {
+      const player = await prisma.player.upsert({
+        where: { normalizedName: keeper.player?.normalizedName ?? normalizePlayerName(keeper.playerName) },
+        update: {
+          displayName: keeper.player?.displayName ?? keeper.playerName,
+          sport: keeper.player?.sport ?? keeper.sport,
+          metadata: keeper.player?.metadata ?? undefined,
+        },
+        create: {
+          normalizedName: keeper.player?.normalizedName ?? normalizePlayerName(keeper.playerName),
+          displayName: keeper.player?.displayName ?? keeper.playerName,
+          sport: keeper.player?.sport ?? keeper.sport,
+          metadata: keeper.player?.metadata ?? undefined,
+        },
+      });
+
+      await prisma.keeper.create({
+        data: {
+          ownerId: keeper.ownerId,
+          playerId: player.id,
+          playerName: keeper.playerName,
+          sport: keeper.sport,
+          tag: keeper.tag,
+          originalValue: keeper.originalValue,
+          draftSlotId: keeper.draftSlotOverallPick ? draftSlotIdByOverallPick.get(keeper.draftSlotOverallPick) : null,
+        },
+      });
+    }
+
+    const season = await prisma.leagueSeason.findFirst({
+      where: { year: 2026 },
+      include: {
+        drafts: {
+          orderBy: { createdAt: "asc" },
+          take: 1,
+        },
+      },
+    });
+    const draft = season?.drafts[0];
+
+    if (draft && draftGridSlots.length > 0) {
+      const existingGridSlots = await prisma.draftGridSlot.findMany({
+        where: { draftId: draft.id },
+        select: { id: true, overallPickNumber: true },
+      });
+      const gridSlotIdByOverallPick = new Map(existingGridSlots.map((slot) => [slot.overallPickNumber, slot.id]));
+
+      for (const slot of draftGridSlots) {
+        const gridSlotId = gridSlotIdByOverallPick.get(slot.overallPickNumber);
+
+        if (!gridSlotId) {
+          continue;
+        }
+
+        const player =
+          slot.playerName && slot.sport
+            ? await prisma.player.upsert({
+                where: { normalizedName: slot.player?.normalizedName ?? normalizePlayerName(slot.playerName) },
+                update: {
+                  displayName: slot.player?.displayName ?? slot.playerName,
+                  sport: slot.player?.sport ?? slot.sport,
+                  metadata: slot.player?.metadata ?? undefined,
+                },
+                create: {
+                  normalizedName: slot.player?.normalizedName ?? normalizePlayerName(slot.playerName),
+                  displayName: slot.player?.displayName ?? slot.playerName,
+                  sport: slot.player?.sport ?? slot.sport,
+                  metadata: slot.player?.metadata ?? undefined,
+                },
+              })
+            : null;
+
+        await prisma.draftGridSlot.update({
+          where: { id: gridSlotId },
+          data: {
+            currentManagerId: slot.currentManagerId,
+            playerId: player?.id ?? null,
+            playerName: slot.playerName,
+            sport: slot.sport,
+            selectionType: slot.selectionType,
+            keeperStatus: slot.keeperStatus,
+            rawCellValue: slot.rawCellValue,
+            notes: slot.notes,
+            selectedAt: slot.selectedAt ? new Date(slot.selectedAt) : null,
+          },
+        });
+      }
+    }
+
+    revalidateAdminViews();
+  } catch (error) {
+    redirectPath = `/admin?status=error&message=${encodeURIComponent(error instanceof Error ? error.message : "Could not restore draft snapshot.")}`;
   }
 
   redirect(redirectPath);

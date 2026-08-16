@@ -2,14 +2,18 @@ import {
   createOwnerCode,
   pushDraftBoardToKeeperGoogleSheet,
   resetDemoData,
+  restoreStart2026DraftStateSnapshot,
   saveKeeperGoogleSheetSource,
+  saveStart2026DraftStateSnapshot,
   syncKeeperGoogleSheetSourceFromForm,
   updateOwnerName,
   updateRosterLimits,
 } from "@/components/admin/admin-actions";
+import { ConfirmActionButton } from "@/components/admin/confirm-action-button";
 import { SyncSheetForm } from "@/components/admin/sync-sheet-form";
 import { importV2TradedPicksText } from "@/components/league/league-actions";
 import { Card } from "@/components/ui/card";
+import { prisma } from "@/lib/db/prisma";
 import { getLeagueSnapshot } from "@/lib/draft/service";
 import { getGoogleSheetSourceConfig } from "@/lib/import/google-sheets";
 import { sportWithEmoji } from "@/lib/utils/format";
@@ -22,7 +26,17 @@ export async function AdminPanel({
     message?: string;
   };
 }) {
-  const [snapshot, googleSheetConfig] = await Promise.all([getLeagueSnapshot(), getGoogleSheetSourceConfig()]);
+  const [snapshot, googleSheetConfig, start2026Snapshot] = await Promise.all([
+    getLeagueSnapshot(),
+    getGoogleSheetSourceConfig(),
+    prisma.importedRecord.findFirst({
+      where: {
+        recordType: "draft_state_snapshot",
+        importKey: "draft-state-snapshot:start-2026",
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+  ]);
   const currentYear = new Date().getFullYear();
 
   return (
@@ -249,6 +263,35 @@ export async function AdminPanel({
             <a className="inline-flex rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white" href="/api/export">
               Download CSV export
             </a>
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+              <h3 className="font-semibold text-amber-950">Testing rollback point</h3>
+              <p className="mt-1 text-sm text-amber-900">
+                Save the current keeper/draft/grid state before testing. Restore will overwrite current picks, keepers, roster selections, and the draft history grid back to this saved point.
+              </p>
+              <p className="mt-2 text-xs font-semibold uppercase tracking-[0.2em] text-amber-900">
+                {start2026Snapshot ? `Saved ${start2026Snapshot.createdAt.toLocaleString()}` : "No snapshot saved yet"}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-3">
+                <form action={saveStart2026DraftStateSnapshot}>
+                  <ConfirmActionButton
+                    action={saveStart2026DraftStateSnapshot}
+                    className="rounded-full border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-950"
+                    message="Save the current draft data as the start of 2026 rollback point? This replaces the previous saved rollback point."
+                  >
+                    Save start of 2026 snapshot
+                  </ConfirmActionButton>
+                </form>
+                <form action={restoreStart2026DraftStateSnapshot}>
+                  <ConfirmActionButton
+                    action={restoreStart2026DraftStateSnapshot}
+                    className="rounded-full bg-amber-700 px-4 py-2 text-sm font-semibold text-white"
+                    message="Restore the saved start of 2026 draft state? This will overwrite the current testing data."
+                  >
+                    Restore start of 2026
+                  </ConfirmActionButton>
+                </form>
+              </div>
+            </div>
             <form action={resetDemoData}>
               <button className="rounded-full border border-[var(--border)] px-4 py-2 text-sm font-semibold" type="submit">
                 Reset and reseed demo data
