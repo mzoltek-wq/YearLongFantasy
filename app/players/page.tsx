@@ -84,7 +84,7 @@ export default async function PlayersPage({ searchParams }: PlayersPageProps) {
         <Card>
           <h2 className="text-xl font-semibold">Paste player CSV/TSV</h2>
           <p className="mt-2 text-sm text-[var(--muted)]">
-            Accepts Gemini/script output headers like Sport, Player Name, ESPN Player ID, Primary Position, Eligible Slots. Also accepts simple rows like Cale Makar,NHL,D.
+            Accepts Gemini/script output headers like Sport, Player Name, ESPN Player ID, Primary Position, Eligible Slots. Also accepts OWGR-style golf ranking CSVs with a NAME column, plus simple rows like Cale Makar,NHL,D.
           </p>
           <form action={importPlayersText} className="mt-4 space-y-3">
             <textarea

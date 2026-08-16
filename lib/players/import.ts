@@ -62,7 +62,9 @@ export function parsePlayerImportText(text: string, source = "manual-player-impo
   const delimiter = rows.some((row) => row.includes("\t")) ? "\t" : ",";
   const firstParts = splitDelimitedRow(rows[0], delimiter);
   const header = firstParts.map(normalizeHeader);
-  const hasHeader = header.some((entry) => ["sport", "playername", "espnplayerid", "primaryposition", "eligibleslots", "positions"].includes(entry));
+  const hasHeader =
+    header.some((entry) => ["sport", "playername", "espnplayerid", "primaryposition", "eligibleslots", "positions"].includes(entry)) ||
+    (header.includes("ranking") && header.includes("name"));
   const dataRows = hasHeader ? rows.slice(1) : rows;
 
   return dataRows.flatMap((row) => {
@@ -159,7 +161,8 @@ function recordFromHeader(parts: string[], header: string[], source: string, raw
     const index = header.indexOf(name);
     return index >= 0 ? parts[index]?.trim() ?? "" : "";
   };
-  const sport = normalizeSportName(value("sport"));
+  const isGolfRankingRow = header.includes("ranking") && header.includes("name") && (header.includes("playerid") || header.includes("ctry"));
+  const sport = normalizeSportName(value("sport")) ?? (isGolfRankingRow ? Sport.GOLF : null);
   const displayName = value("playername") || value("name") || value("player");
 
   if (!sport || !displayName) {
@@ -170,11 +173,23 @@ function recordFromHeader(parts: string[], header: string[], source: string, raw
     displayName,
     sport,
     espnId: value("espnplayerid") || value("espnid") || value("id") || null,
-    primaryPosition: value("primaryposition") || value("position") || null,
+    primaryPosition: value("primaryposition") || value("position") || (sport === Sport.GOLF ? "GOLFER" : null),
     eligiblePositions: splitPositions(value("eligibleslots") || value("eligiblepositions") || value("positions")),
     team: value("team") || null,
-    source,
-    raw: { row: rawRow },
+    source: isGolfRankingRow ? "owgr-rankings-import" : source,
+    raw: isGolfRankingRow
+      ? {
+          row: rawRow,
+          owgrPlayerId: value("playerid") || null,
+          ranking: value("ranking") || null,
+          country: value("ctry") || null,
+          averagePoints: value("averagepoints") || null,
+          totalPoints: value("totalpoints") || null,
+          eventsPlayed: value("eventsplayedactual") || value("eventsplayeddivisor") || null,
+          week: value("week") || null,
+          weekendDate: value("weekenddate") || null,
+        }
+      : { row: rawRow },
   };
 }
 
