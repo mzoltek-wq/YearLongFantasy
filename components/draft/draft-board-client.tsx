@@ -12,6 +12,18 @@ type DraftBoardClientProps = {
   trackerStickyClassName?: string;
 };
 
+type PlayerResolution = {
+  playerName: string;
+  matchedDisplayName: string | null;
+  sport: Sport | null;
+  sportSource: "player-db" | "typed-value" | "unknown";
+  positions: string[];
+  positionSource: "player-db" | "typed-value" | "default" | "unknown";
+  team: string | null;
+  warnings: string[];
+  rosterWarnings: string[];
+};
+
 async function requestJson<T>(input: RequestInfo, init?: RequestInit) {
   const response = await fetch(input, {
     ...init,
@@ -32,8 +44,9 @@ async function requestJson<T>(input: RequestInfo, init?: RequestInit) {
 export function DraftBoardClient({ initialSnapshot, mode = "commissioner", trackerStickyClassName = "top-2" }: DraftBoardClientProps) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [playerName, setPlayerName] = useState("");
-  const [sport, setSport] = useState<Sport>(Sport.HOCKEY);
   const [searchQuery, setSearchQuery] = useState("");
+  const [playerResolution, setPlayerResolution] = useState<PlayerResolution | null>(null);
+  const [isResolvingPlayer, setIsResolvingPlayer] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,6 +54,12 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
     const data = await requestJson<LeagueSnapshot>("/api/draft");
     setSnapshot(data);
   }
+
+  const currentPick = snapshot.draftWindow.currentPick;
+  const nextPick = snapshot.draftWindow.nextPick;
+  const isTrackerMode = mode === "tracker";
+  const recentPickLimit = isTrackerMode ? 10 : 5;
+  const upcomingPickLimit = isTrackerMode ? 10 : 5;
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -50,11 +69,45 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
     return () => clearInterval(interval);
   }, []);
 
-  const currentPick = snapshot.draftWindow.currentPick;
-  const nextPick = snapshot.draftWindow.nextPick;
-  const isTrackerMode = mode === "tracker";
-  const recentPickLimit = isTrackerMode ? 10 : 5;
-  const upcomingPickLimit = isTrackerMode ? 10 : 5;
+  useEffect(() => {
+    const trimmedPlayerName = playerName.trim();
+
+    if (!currentPick || trimmedPlayerName.length < 2) {
+      return;
+    }
+
+    let isCurrent = true;
+    const timeout = setTimeout(() => {
+      requestJson<PlayerResolution>("/api/draft/resolve-player", {
+        method: "POST",
+        body: JSON.stringify({
+          overallPickNumber: currentPick.overallPickNumber,
+          playerName: trimmedPlayerName,
+        }),
+      })
+        .then((resolution) => {
+          if (isCurrent) {
+            setPlayerResolution(resolution);
+          }
+        })
+        .catch(() => {
+          if (isCurrent) {
+            setPlayerResolution(null);
+          }
+        })
+        .finally(() => {
+          if (isCurrent) {
+            setIsResolvingPlayer(false);
+          }
+        });
+    }, 250);
+
+    return () => {
+      isCurrent = false;
+      clearTimeout(timeout);
+    };
+  }, [currentPick, playerName]);
+
   const completedPicks = useMemo(
     () =>
       [...snapshot.slots]
@@ -134,10 +187,10 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
         body: JSON.stringify({
           overallPickNumber: currentPick.overallPickNumber,
           playerName,
-          sport,
         }),
       });
       setPlayerName("");
+      setPlayerResolution(null);
       setMessage(`Saved pick ${currentPick.overallPickNumber}.`);
       await refresh();
     } catch (caughtError) {
@@ -194,28 +247,53 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
               <input
                 className="w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3 outline-none ring-0"
                 id="playerName"
-                onChange={(event) => setPlayerName(event.target.value)}
+                onChange={(event) => {
+                  const nextPlayerName = event.target.value;
+                  setPlayerName(nextPlayerName);
+                  setPlayerResolution(null);
+                  setIsResolvingPlayer(Boolean(currentPick && nextPlayerName.trim().length >= 2));
+                }}
                 placeholder="Enter player name"
                 value={playerName}
               />
             </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium" htmlFor="sport">
-                Sport
-              </label>
-              <select
-                className="w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3 outline-none ring-0"
-                id="sport"
-                onChange={(event) => setSport(event.target.value as Sport)}
-                value={sport}
-              >
-                {SPORTS.map((entry) => (
-                  <option key={entry} value={entry}>
-                    {SPORT_EMOJIS[entry]} {SPORT_LABELS[entry]}
-                  </option>
-                ))}
-              </select>
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-strong)] px-4 py-3 text-sm">
+              {isResolvingPlayer ? (
+                <p className="text-[var(--muted)]">Checking player sport and ESPN-style eligibility...</p>
+              ) : playerResolution ? (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold">{playerResolution.matchedDisplayName ?? playerResolution.playerName}</span>
+                    {playerResolution.sport ? (
+                      <span className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-[var(--muted)]">
+                        {SPORT_EMOJIS[playerResolution.sport]} {SPORT_LABELS[playerResolution.sport]}
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800">Sport unknown</span>
+                    )}
+                    {playerResolution.positions.length > 0 ? (
+                      <span className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-[var(--muted)]">
+                        ESPN positions: {playerResolution.positions.join(", ")}
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="text-xs text-[var(--muted)]">
+                    Source: sport from {playerResolution.sportSource.replace("-", " ")}, positions from {playerResolution.positionSource.replace("-", " ")}.
+                  </p>
+                  {[...playerResolution.warnings, ...playerResolution.rosterWarnings].length > 0 ? (
+                    <div className="space-y-1 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                      {[...playerResolution.warnings, ...playerResolution.rosterWarnings].map((warning) => (
+                        <p key={warning}>{warning}</p>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="rounded-xl bg-emerald-50 px-3 py-2 text-xs text-emerald-800">Looks eligible based on cached player data.</p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[var(--muted)]">Type a player name to auto-detect sport and roster eligibility.</p>
+              )}
             </div>
 
             <button

@@ -9,6 +9,7 @@ const links = [
   { href: "/keepers", label: "Draft Setup" },
   { href: "/league/2026/grid", label: "Draft History" },
   { href: "/rosters", label: "Rosters" },
+  { href: "/players", label: "Players" },
   { href: "/trades", label: "Trades" },
   { href: "/admin", label: "Admin" },
   { href: "/tracker", label: "Tracker" },

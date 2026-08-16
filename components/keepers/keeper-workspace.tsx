@@ -562,12 +562,12 @@ export async function KeeperWorkspace({
 
         <Card>
           <h2 className="text-xl font-semibold">Player database</h2>
-          <p className="mt-2 text-sm text-[var(--muted)]">{playerCount} players stored. Add rows as names come in so future keeper imports can match sports automatically.</p>
+          <p className="mt-2 text-sm text-[var(--muted)]">{playerCount} players stored. Add rows as names come in so keeper imports and draft entry can match sports and ESPN-style position eligibility automatically.</p>
           <form action={importPlayerDatabaseText} className="mt-4 space-y-3">
             <textarea
               className="min-h-48 w-full rounded-2xl border border-[var(--border)] px-4 py-3 font-mono text-sm"
               name="playerDatabaseText"
-              placeholder={"Nathan MacKinnon,NHL\nPaolo Banchero NBA\nJac Caglianone MLB"}
+              placeholder={"Nathan MacKinnon,NHL,C\nCale Makar,NHL,D\nShohei Ohtani,MLB,DH/SP,LAD\nPaolo Banchero,NBA,PF/C\nJosh Allen,NFL,QB"}
             />
             <button className="rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-white" type="submit">
               Import player rows

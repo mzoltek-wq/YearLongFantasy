@@ -2,6 +2,7 @@ import { DraftSelectionType, DraftSlot, Prisma, Sport } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
 import { pushDraftPickWriteback } from "@/lib/import/google-sheets";
+import { buildPlayerMetadata, resolveDraftPlayer } from "@/lib/players/resolve";
 import { DraftSlotWithRelations, KeeperWithRelations, LeagueSnapshot } from "@/lib/types/draft";
 import { normalizePlayerName } from "@/lib/utils/draft";
 import { calculateRosterTotals, getCurrentDraftWindow, validateDraftIntegrity, validateLeagueTotals } from "@/lib/validation/draft";
@@ -62,7 +63,7 @@ export async function getLeagueSnapshot(): Promise<LeagueSnapshot> {
   };
 }
 
-async function upsertPlayer(tx: Prisma.TransactionClient, displayName: string, sport: Sport) {
+async function upsertPlayer(tx: Prisma.TransactionClient, displayName: string, sport: Sport, metadata?: Prisma.InputJsonValue) {
   const normalizedName = normalizePlayerName(displayName);
 
   const existing = await tx.player.findUnique({
@@ -82,6 +83,7 @@ async function upsertPlayer(tx: Prisma.TransactionClient, displayName: string, s
       displayName,
       normalizedName,
       sport,
+      metadata,
     },
   });
 }
@@ -203,10 +205,18 @@ async function syncDraftGridSlotFromDraftSlot({
 export async function makeDraftPick(input: {
   overallPickNumber: number;
   playerName: string;
-  sport: Sport;
+  sport?: Sport;
 }) {
   const slot = await prisma.$transaction(async (tx) => {
-    const normalizedName = normalizePlayerName(input.playerName);
+    const resolution = await resolveDraftPlayer(input.playerName, tx);
+    const sport = input.sport ?? resolution.sport;
+
+    if (!sport) {
+      throw new Error(`Could not determine "${input.playerName}" sport. Add it to the player database or type a sport token like MLB, NBA, NHL, NFL, or PGA.`);
+    }
+
+    const playerName = resolution.matchedDisplayName ?? resolution.playerName;
+    const normalizedName = normalizePlayerName(playerName);
     const duplicate = await tx.player.findUnique({
       where: { normalizedName },
     });
@@ -219,7 +229,7 @@ export async function makeDraftPick(input: {
       });
 
       if (duplicateSlot) {
-        throw new Error(`"${input.playerName}" has already been selected.`);
+        throw new Error(`"${playerName}" has already been selected.`);
       }
     }
 
@@ -233,10 +243,19 @@ export async function makeDraftPick(input: {
 
     await enforceOwnerSportLimit(tx, {
       ownerId: slot.currentOwnerId,
-      sport: input.sport,
+      sport,
     });
 
-    const player = await upsertPlayer(tx, input.playerName.trim(), input.sport);
+    const player = await upsertPlayer(
+      tx,
+      playerName.trim(),
+      sport,
+      buildPlayerMetadata({
+        positions: resolution.positions,
+        team: resolution.team,
+        source: resolution.matchedPlayerId ? "player-db" : "draft-entry",
+      }) as Prisma.InputJsonValue,
+    );
     const selectedAt = new Date();
     const originalRawValue = input.playerName.trim();
 
@@ -245,7 +264,7 @@ export async function makeDraftPick(input: {
       data: {
         selectedPlayerId: player.id,
         selectedPlayerName: player.displayName,
-        selectedSport: input.sport,
+        selectedSport: sport,
         selectedAt,
         originalRawValue,
       },
@@ -255,7 +274,7 @@ export async function makeDraftPick(input: {
       slot,
       playerId: player.id,
       playerName: player.displayName,
-      sport: input.sport,
+      sport,
       selectionType: DraftSelectionType.DRAFTED,
       originalRawValue,
       selectedAt,
@@ -273,7 +292,7 @@ export async function makeDraftPick(input: {
 export async function updateDraftPick(input: {
   overallPickNumber: number;
   playerName: string;
-  sport: Sport;
+  sport?: Sport;
 }) {
   const slot = await prisma.$transaction(async (tx) => {
     const slot = await tx.draftSlot.findUnique({
@@ -284,7 +303,15 @@ export async function updateDraftPick(input: {
       throw new Error("Draft slot not found.");
     }
 
-    const normalizedName = normalizePlayerName(input.playerName);
+    const resolution = await resolveDraftPlayer(input.playerName, tx);
+    const sport = input.sport ?? resolution.sport;
+
+    if (!sport) {
+      throw new Error(`Could not determine "${input.playerName}" sport. Add it to the player database or type a sport token like MLB, NBA, NHL, NFL, or PGA.`);
+    }
+
+    const playerName = resolution.matchedDisplayName ?? resolution.playerName;
+    const normalizedName = normalizePlayerName(playerName);
     const duplicatePlayer = await tx.player.findUnique({ where: { normalizedName } });
 
     if (duplicatePlayer) {
@@ -296,17 +323,26 @@ export async function updateDraftPick(input: {
       });
 
       if (duplicateSlot) {
-        throw new Error(`"${input.playerName}" has already been selected.`);
+        throw new Error(`"${playerName}" has already been selected.`);
       }
     }
 
     await enforceOwnerSportLimit(tx, {
       ownerId: slot.currentOwnerId,
-      sport: input.sport,
+      sport,
       overallPickNumberToIgnore: input.overallPickNumber,
     });
 
-    const player = await upsertPlayer(tx, input.playerName.trim(), input.sport);
+    const player = await upsertPlayer(
+      tx,
+      playerName.trim(),
+      sport,
+      buildPlayerMetadata({
+        positions: resolution.positions,
+        team: resolution.team,
+        source: resolution.matchedPlayerId ? "player-db" : "draft-entry",
+      }) as Prisma.InputJsonValue,
+    );
     const selectedAt = new Date();
     const originalRawValue = input.playerName.trim();
 
@@ -315,7 +351,7 @@ export async function updateDraftPick(input: {
       data: {
         selectedPlayerId: player.id,
         selectedPlayerName: player.displayName,
-        selectedSport: input.sport,
+        selectedSport: sport,
         selectedAt,
         originalRawValue,
       },
@@ -325,7 +361,7 @@ export async function updateDraftPick(input: {
       slot,
       playerId: player.id,
       playerName: player.displayName,
-      sport: input.sport,
+      sport,
       selectionType: DraftSelectionType.DRAFTED,
       originalRawValue,
       selectedAt,

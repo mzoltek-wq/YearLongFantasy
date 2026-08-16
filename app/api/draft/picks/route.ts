@@ -7,7 +7,7 @@ import { makeDraftPick, undoDraftPick, updateDraftPick } from "@/lib/draft/servi
 const pickSchema = z.object({
   overallPickNumber: z.number().int().positive(),
   playerName: z.string().trim().min(1),
-  sport: z.nativeEnum(Sport),
+  sport: z.nativeEnum(Sport).optional(),
 });
 
 const undoSchema = z.object({

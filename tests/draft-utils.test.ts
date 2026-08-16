@@ -14,6 +14,8 @@ import {
   parseSpreadsheetPlayerCell,
 } from "@/lib/utils/draft";
 import { parseKeeperText } from "@/lib/keepers/import";
+import { parsePlayerImportText } from "@/lib/players/import";
+import { evaluateRosterFit, normalizePositions } from "@/lib/roster/positions";
 import { calculateRosterTotals, validateLeagueTotals } from "@/lib/validation/draft";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/keeper-grid-2026.tsv", import.meta.url));
@@ -233,4 +235,25 @@ test("calculates roster totals and validates league totals", () => {
     "below",
   );
   assert.equal(leagueTotals.bySport.find((entry) => entry.sport === Sport.HOCKEY)?.target, 2);
+});
+
+test("parses ESPN-style player import rows", () => {
+  const [player] = parsePlayerImportText(`Sport,Player Name,ESPN Player ID,Primary Position,Eligible Slots
+Hockey,Cale Makar,123,D,D`);
+
+  assert.equal(player.displayName, "Cale Makar");
+  assert.equal(player.sport, Sport.HOCKEY);
+  assert.equal(player.espnId, "123");
+  assert.deepEqual(player.eligiblePositions, ["D"]);
+});
+
+test("basketball roster fit can move a PF/C into center when needed", () => {
+  const fit = evaluateRosterFit(Sport.BASKETBALL, [
+    { id: "wemby", name: "Victor Wembanyama", sport: Sport.BASKETBALL, positions: normalizePositions(Sport.BASKETBALL, ["PF,C"]) },
+    { id: "tatum", name: "Jayson Tatum", sport: Sport.BASKETBALL, positions: normalizePositions(Sport.BASKETBALL, ["SF,PF"]) },
+    { id: "booker", name: "Devin Booker", sport: Sport.BASKETBALL, positions: normalizePositions(Sport.BASKETBALL, ["SG"]) },
+  ]);
+
+  const wembySlot = fit.assignments.find((assignment) => assignment.player?.id === "wemby")?.slot;
+  assert.equal(wembySlot, "C");
 });

@@ -8,6 +8,8 @@ import { prisma } from "@/lib/db/prisma";
 import { DEFAULT_TOTAL_ROUNDS } from "@/lib/constants/league";
 import { interpretFullKeeperGrid, normalizeFullKeeperGridInput } from "@/lib/keepers/full-grid";
 import { ParsedKeeperTextEntry, parseKeeperText } from "@/lib/keepers/import";
+import { buildPlayerMetadata } from "@/lib/players/resolve";
+import { normalizePositions } from "@/lib/roster/positions";
 import { buildSnakeDraftOrder, normalizePlayerName, parseSportFromValue } from "@/lib/utils/draft";
 
 const MANUAL_KEEPER_IMPORT_SOURCE_ID = "manual-keeper-import-source";
@@ -1274,12 +1276,15 @@ export async function importPlayerDatabaseText(formData: FormData) {
 
     for (const row of rows) {
       const csvParts = row.split(",").map((part) => part.trim()).filter(Boolean);
+      const sportPartIndex = csvParts.findIndex((part) => parseSportFromValue(part));
+      const sport = sportPartIndex >= 0 ? parseSportFromValue(csvParts[sportPartIndex]) : parseSportFromValue(row);
       const rawName =
-        csvParts.length >= 2
-          ? csvParts.slice(0, -1).join(", ")
+        csvParts.length >= 2 && sportPartIndex >= 0
+          ? csvParts.slice(0, sportPartIndex).join(", ").trim()
           : row.replace(/\s+(NHL|MLB|NFL|NBA|PGA|GOLF|HOCKEY|BASEBALL|FOOTBALL|BASKETBALL)$/i, "").trim();
-      const sportToken = csvParts.length >= 2 ? csvParts[csvParts.length - 1] : row;
-      const sport = parseSportFromValue(sportToken);
+      const positionPart = sport && sportPartIndex >= 0 ? csvParts[sportPartIndex + 1] : "";
+      const team = sportPartIndex >= 0 ? csvParts[sportPartIndex + 2] : "";
+      const positions = sport ? normalizePositions(sport, [positionPart]) : [];
 
       if (!rawName || !sport) {
         unresolvedCount += 1;
@@ -1291,11 +1296,13 @@ export async function importPlayerDatabaseText(formData: FormData) {
         update: {
           displayName: rawName,
           sport,
+          metadata: buildPlayerMetadata({ positions, team, source: "manual-player-database" }),
         },
         create: {
           normalizedName: normalizePlayerName(rawName),
           displayName: rawName,
           sport,
+          metadata: buildPlayerMetadata({ positions, team, source: "manual-player-database" }),
         },
       });
 
