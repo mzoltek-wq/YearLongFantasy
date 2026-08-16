@@ -57,6 +57,24 @@ type KeeperApprovalPayload = {
   approvedAt?: string;
 };
 
+type KeeperFullGridImportLogPayload = {
+  importedTotal?: number;
+  issueCount?: number;
+  rowCount?: number;
+  ownerColumnCount?: number;
+  importedAt?: string;
+  topIssueReasons?: Array<{
+    reason?: string;
+    count?: number;
+  }>;
+  importedCountByOwner?: Array<{
+    ownerId?: string;
+    ownerName?: string;
+    importedCount?: number;
+    k4Count?: number;
+  }>;
+};
+
 function getIssuePayload(value: unknown) {
   return (value ?? {}) as KeeperIssuePayload;
 }
@@ -67,6 +85,10 @@ function getSubmissionPayload(value: unknown) {
 
 function getApprovalPayload(value: unknown) {
   return (value ?? {}) as KeeperApprovalPayload;
+}
+
+function getFullGridImportLogPayload(value: unknown) {
+  return (value ?? {}) as KeeperFullGridImportLogPayload;
 }
 
 export async function KeeperWorkspace({
@@ -82,7 +104,7 @@ export async function KeeperWorkspace({
     prisma.importedRecord.findMany({
       where: {
         recordType: {
-          in: ["keeper_import_issue", "keeper_import_submission", "keeper_import_approval"],
+          in: ["keeper_import_issue", "keeper_import_submission", "keeper_import_approval", "keeper_full_grid_import_log"],
         },
       },
       orderBy: { createdAt: "desc" },
@@ -112,6 +134,8 @@ export async function KeeperWorkspace({
   }, new Map<string, number>());
   const latestSubmissionByOwnerId = new Map<string, KeeperSubmissionPayload>();
   const latestApprovalByOwnerId = new Map<string, KeeperApprovalPayload>();
+  const latestFullGridImportLog = importRecords.find((record) => record.recordType === "keeper_full_grid_import_log");
+  const latestFullGridImportLogPayload = latestFullGridImportLog ? getFullGridImportLogPayload(latestFullGridImportLog.normalizedPayload) : null;
 
   for (const record of importRecords.filter((entry) => entry.recordType === "keeper_import_submission")) {
     const payload = getSubmissionPayload(record.normalizedPayload);
@@ -180,6 +204,34 @@ export async function KeeperWorkspace({
               </button>
             </form>
           </div>
+
+          {latestFullGridImportLogPayload ? (
+            <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--surface-strong)] px-4 py-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 className="font-semibold">Latest full-grid import log</h3>
+                  <p className="mt-1 text-sm text-[var(--muted)]">
+                    Imported {latestFullGridImportLogPayload.importedTotal ?? 0} keepers across {latestFullGridImportLogPayload.ownerColumnCount ?? 0} owner columns.
+                  </p>
+                </div>
+                <span className="rounded-full border border-[var(--border)] bg-white px-3 py-1 text-xs font-semibold">
+                  {latestFullGridImportLogPayload.issueCount ?? 0} issue{latestFullGridImportLogPayload.issueCount === 1 ? "" : "s"}
+                </span>
+              </div>
+
+              {latestFullGridImportLogPayload.topIssueReasons && latestFullGridImportLogPayload.topIssueReasons.length > 0 ? (
+                <div className="mt-3 space-y-2">
+                  {latestFullGridImportLogPayload.topIssueReasons.map((entry, index) => (
+                    <div className="rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm" key={`${entry.reason}-${index}`}>
+                      <span className="font-semibold">{entry.count ?? 0}x</span> {entry.reason ?? "Unknown issue"}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">No logged issue reasons from the last full-grid import.</p>
+              )}
+            </div>
+          ) : null}
 
           <form action={importKeeperText} className="mt-4 space-y-4">
             <div>

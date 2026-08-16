@@ -14,7 +14,7 @@ const OWNER_CODE_TOKEN_GLOBAL_REGEX = /\(([A-Z]{2})\)/gi;
 const KEEPER_TAG_VALUES = new Set(["K1", "K2", "K3", "K4"]);
 
 function revalidateKeeperViews() {
-  ["/keepers", "/draft", "/tracker", "/dashboard", "/owners", "/admin"].forEach((path) => revalidatePath(path));
+  ["/keepers", "/draft", "/tracker", "/league-view", "/rosters", "/dashboard", "/owners", "/admin"].forEach((path) => revalidatePath(path));
 }
 
 function keeperFeedbackPath(status: "success" | "error", message: string) {
@@ -226,7 +226,7 @@ export async function updateDraftOrder(formData: FormData) {
       prisma.importedRecord.deleteMany({
         where: {
           recordType: {
-            in: ["keeper_import_issue", "keeper_import_submission", "keeper_import_approval"],
+            in: ["keeper_import_issue", "keeper_import_submission", "keeper_import_approval", "keeper_full_grid_import_log"],
           },
         },
       }),
@@ -474,7 +474,7 @@ export async function importFullKeeperGridText(formData: FormData) {
     await prisma.importedRecord.deleteMany({
       where: {
         recordType: {
-          in: ["keeper_import_issue", "keeper_import_submission", "keeper_import_approval"],
+          in: ["keeper_import_issue", "keeper_import_submission", "keeper_import_approval", "keeper_full_grid_import_log"],
         },
       },
     });
@@ -707,12 +707,44 @@ export async function importFullKeeperGridText(formData: FormData) {
       });
     }
 
+    const issueReasonCounts = issues.reduce((counts, issue) => {
+      counts.set(issue.reason, (counts.get(issue.reason) ?? 0) + 1);
+      return counts;
+    }, new Map<string, number>());
+    const topIssueReasons = Array.from(issueReasonCounts.entries())
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 8)
+      .map(([reason, count]) => ({ reason, count }));
+    const importedTotal = Array.from(importedCountByOwnerId.values()).reduce((total, count) => total + count, 0);
+
+    await prisma.importedRecord.create({
+      data: {
+        integrationSourceId: source.id,
+        sourceType: IntegrationType.MANUAL_ENTRY,
+        recordType: "keeper_full_grid_import_log",
+        rawPayload: input.slice(0, 5000),
+        normalizedPayload: {
+          importedTotal,
+          issueCount: issues.length,
+          rowCount: Math.max(rows.length - headerIndex - 1, 0),
+          ownerColumnCount: ownerColumns.length,
+          topIssueReasons,
+          importedCountByOwner: owners.map((owner) => ({
+            ownerId: owner.id,
+            ownerName: owner.name,
+            importedCount: importedCountByOwnerId.get(owner.id) ?? 0,
+            k4Count: k4CountByOwnerId.get(owner.id) ?? 0,
+          })),
+          importedAt: new Date().toISOString(),
+        },
+        importKey: `keeper-full-grid-log:${Date.now()}`,
+      },
+    });
+
     revalidateKeeperViews();
     redirectPath = keeperFeedbackPath(
       issues.length > 0 ? "error" : "success",
-      `Full grid import complete. Imported ${Array.from(importedCountByOwnerId.values()).reduce((total, count) => total + count, 0)} keepers with ${issues.length} issue${
-        issues.length === 1 ? "" : "s"
-      }.`,
+      `Full grid import complete. Imported ${importedTotal} keepers with ${issues.length} issue${issues.length === 1 ? "" : "s"}.`,
     );
   } catch (error) {
     redirectPath = keeperFeedbackPath("error", error instanceof Error ? error.message : "Could not import the full keeper grid.");
