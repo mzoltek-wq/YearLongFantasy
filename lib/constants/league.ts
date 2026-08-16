@@ -72,12 +72,12 @@ export const SPORT_ALIASES: Record<string, Sport> = {
 export const IGNORED_OWNER_OVERRIDE_TOKENS = new Set(["FT", "K", "K1", "K2", "K3", "K4"]);
 
 export const DEFAULT_ROSTER_LIMITS: Record<Sport, number> = {
-  [Sport.HOCKEY]: 4,
-  [Sport.BASEBALL]: 5,
-  [Sport.FOOTBALL]: 4,
-  [Sport.BASKETBALL]: 3,
+  [Sport.HOCKEY]: 17,
+  [Sport.BASEBALL]: 22,
+  [Sport.FOOTBALL]: 17,
+  [Sport.BASKETBALL]: 14,
   [Sport.GOLF]: 5,
 };
 
-export const DEFAULT_EXPECTED_TOTAL_PLAYERS_PER_OWNER = 15;
-export const DEFAULT_TOTAL_ROUNDS = 15;
+export const DEFAULT_EXPECTED_TOTAL_PLAYERS_PER_OWNER = 75;
+export const DEFAULT_TOTAL_ROUNDS = 75;

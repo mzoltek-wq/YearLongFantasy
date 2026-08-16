@@ -470,6 +470,7 @@ export async function importFullKeeperGridText(formData: FormData) {
     const seenPlayerNames = new Set<string>();
     const importedCountByOwnerId = new Map<string, number>();
     const k4CountByOwnerId = new Map<string, number>();
+    let skippedMissingKeeperTagCount = 0;
     const placementSamples: Array<{
       playerName: string;
       round: number;
@@ -612,7 +613,7 @@ export async function importFullKeeperGridText(formData: FormData) {
         }
 
         if (!entry.keeperTag) {
-          issues.push({ owner: currentOwner, entry, reason: "Missing keeper tag. Use K1, K2, K3, or K4." });
+          skippedMissingKeeperTagCount += 1;
           continue;
         }
 
@@ -747,6 +748,7 @@ export async function importFullKeeperGridText(formData: FormData) {
           issueCount: issues.length,
           rowCount: Math.max(rows.length - headerIndex - 1, 0),
           ownerColumnCount: ownerColumns.length,
+          skippedMissingKeeperTagCount,
           topIssueReasons,
           placementSamples,
           importedCountByOwner: owners.map((owner) => ({

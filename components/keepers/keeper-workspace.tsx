@@ -62,6 +62,7 @@ type KeeperFullGridImportLogPayload = {
   issueCount?: number;
   rowCount?: number;
   ownerColumnCount?: number;
+  skippedMissingKeeperTagCount?: number;
   importedAt?: string;
   topIssueReasons?: Array<{
     reason?: string;
@@ -174,6 +175,9 @@ export async function KeeperWorkspace({
             <p className="mt-2 max-w-3xl text-sm text-[var(--muted)]">
               Set the first-round order before importing keepers. The app will snake the remaining rounds from this order using the current roster sizes.
             </p>
+            <p className="mt-2 max-w-3xl rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              If the import says it cannot find picks in later rounds, update roster sizes in Admin first, then save draft order again so the board has all 75 rounds.
+            </p>
           </div>
           <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-strong)] px-4 py-3 text-sm font-semibold">
             {maxRound} rounds
@@ -220,6 +224,9 @@ export async function KeeperWorkspace({
                   <h3 className="font-semibold">Latest full-grid import log</h3>
                   <p className="mt-1 text-sm text-[var(--muted)]">
                     Imported {latestFullGridImportLogPayload.importedTotal ?? 0} keepers across {latestFullGridImportLogPayload.ownerColumnCount ?? 0} owner columns.
+                    {latestFullGridImportLogPayload.skippedMissingKeeperTagCount
+                      ? ` Skipped ${latestFullGridImportLogPayload.skippedMissingKeeperTagCount} player-looking cells without keeper tags.`
+                      : ""}
                   </p>
                 </div>
                 <span className="rounded-full border border-[var(--border)] bg-white px-3 py-1 text-xs font-semibold">

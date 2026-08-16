@@ -74,10 +74,10 @@ const OWNER_CODES = {
 const SPORTS = [Sport.HOCKEY, Sport.BASEBALL, Sport.FOOTBALL, Sport.BASKETBALL, Sport.GOLF];
 
 const DEFAULT_ROSTER_LIMITS = {
-  [Sport.HOCKEY]: 4,
-  [Sport.BASEBALL]: 5,
-  [Sport.FOOTBALL]: 4,
-  [Sport.BASKETBALL]: 3,
+  [Sport.HOCKEY]: 17,
+  [Sport.BASEBALL]: 22,
+  [Sport.FOOTBALL]: 17,
+  [Sport.BASKETBALL]: 14,
   [Sport.GOLF]: 5,
 };
 
