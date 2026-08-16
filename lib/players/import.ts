@@ -83,6 +83,7 @@ export async function importPlayerRecords(db: PlayerWriter, records: ImportableP
   async function importRecord(record: ImportablePlayerRecord) {
     const displayName = record.displayName.trim();
     const positions = normalizePositions(record.sport, [record.primaryPosition, ...(record.eligiblePositions ?? [])]);
+    const normalizedName = normalizePlayerName(displayName);
 
     if (!displayName || !record.sport) {
       unresolved += 1;
@@ -90,15 +91,20 @@ export async function importPlayerRecords(db: PlayerWriter, records: ImportableP
       return;
     }
 
+    const existingPlayer = await db.player.findUnique({
+      where: { normalizedName },
+      select: { metadata: true },
+    });
+
     await db.player.upsert({
-      where: { normalizedName: normalizePlayerName(displayName) },
+      where: { normalizedName },
       update: {
         displayName,
         sport: record.sport,
-        metadata: buildMetadata(record, positions),
+        metadata: buildMetadata(record, positions, existingPlayer?.metadata),
       },
       create: {
-        normalizedName: normalizePlayerName(displayName),
+        normalizedName,
         displayName,
         sport: record.sport,
         metadata: buildMetadata(record, positions),
@@ -129,12 +135,17 @@ export async function importPlayerRecords(db: PlayerWriter, records: ImportableP
   };
 }
 
-function buildMetadata(record: ImportablePlayerRecord, positions: PositionCode[]) {
+function buildMetadata(record: ImportablePlayerRecord, positions: PositionCode[], existingMetadata?: unknown) {
+  const current = existingMetadata && typeof existingMetadata === "object" && !Array.isArray(existingMetadata) ? (existingMetadata as Record<string, unknown>) : {};
+
   return buildPlayerMetadata({
     positions,
     team: record.team,
     source: record.source,
     existing: {
+      manualPositions: current.manualPositions,
+      positionOverrideSource: current.positionOverrideSource,
+      positionOverrideUpdatedAt: current.positionOverrideUpdatedAt,
       espnId: record.espnId ? String(record.espnId) : null,
       primaryPosition: record.primaryPosition ?? null,
       eligiblePositions: record.eligiblePositions ?? [],

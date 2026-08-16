@@ -77,6 +77,14 @@ export const ROSTER_POSITION_SLOTS: Record<Sport, RosterSlotCode[]> = {
   [Sport.HOCKEY]: ["F", "F", "F", "F", "F", "F", "D", "D", "D", "UTIL", "UTIL", "UTIL", "G", "G", "BENCH", "BENCH", "BENCH"],
 };
 
+export const POSITION_OPTIONS_BY_SPORT: Record<Sport, PositionCode[]> = {
+  [Sport.BASEBALL]: ["C", "1B", "2B", "3B", "SS", "OF", "DH", "SP", "RP"],
+  [Sport.BASKETBALL]: ["PG", "SG", "SF", "PF", "C"],
+  [Sport.FOOTBALL]: ["QB", "RB", "WR", "TE", "DST", "K"],
+  [Sport.GOLF]: ["GOLFER"],
+  [Sport.HOCKEY]: ["F", "D", "G"],
+};
+
 export function getRosterPositionSlots(sport: Sport, rosterLimit?: number | null) {
   const slots = ROSTER_POSITION_SLOTS[sport] ?? [];
 
@@ -180,6 +188,16 @@ export function extractPositionsFromMetadata(sport: Sport, metadata: unknown) {
 
   const record = metadata as Record<string, unknown>;
   const raw = typeof record.raw === "object" && record.raw ? (record.raw as Record<string, unknown>) : {};
+  const manualCandidates = [record.manualPositions, record.positionOverride];
+  const manualPositions = normalizePositions(
+    sport,
+    manualCandidates.flatMap((candidate) => (Array.isArray(candidate) ? candidate.map(String) : [candidate == null ? "" : String(candidate)])),
+  );
+
+  if (manualPositions.length > 0) {
+    return manualPositions;
+  }
+
   const candidates = [
     record.position,
     record.positionGroup,

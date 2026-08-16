@@ -1,5 +1,5 @@
 import { Card } from "@/components/ui/card";
-import { importEspnPlayers, importPlayersText } from "@/components/players/player-actions";
+import { clearPlayerPositionOverride, importEspnPlayers, importPlayersText, updatePlayerPositionOverride } from "@/components/players/player-actions";
 import { PlayerBrowser, PlayerBrowserRow } from "@/components/players/player-browser";
 import { prisma } from "@/lib/db/prisma";
 import { extractPositionsFromMetadata } from "@/lib/roster/positions";
@@ -33,6 +33,7 @@ export default async function PlayersPage({ searchParams }: PlayersPageProps) {
       team: typeof metadata.team === "string" ? metadata.team : null,
       espnId: typeof metadata.espnId === "string" ? metadata.espnId : null,
       source: typeof metadata.source === "string" ? metadata.source : null,
+      hasManualPositionOverride: Array.isArray(metadata.manualPositions) && metadata.manualPositions.length > 0,
       updatedAt: player.updatedAt.toISOString(),
     };
   });
@@ -98,7 +99,7 @@ export default async function PlayersPage({ searchParams }: PlayersPageProps) {
         </Card>
       </div>
 
-      <PlayerBrowser players={browserRows} />
+      <PlayerBrowser clearPositionOverrideAction={clearPlayerPositionOverride} players={browserRows} updatePositionOverrideAction={updatePlayerPositionOverride} />
     </div>
   );
 }

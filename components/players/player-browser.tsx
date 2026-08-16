@@ -4,6 +4,7 @@ import { Sport } from "@prisma/client";
 import { useMemo, useState } from "react";
 
 import { SPORTS, SPORT_EMOJIS, SPORT_LABELS } from "@/lib/constants/league";
+import { POSITION_OPTIONS_BY_SPORT } from "@/lib/roster/positions";
 
 export type PlayerBrowserRow = {
   id: string;
@@ -13,14 +14,17 @@ export type PlayerBrowserRow = {
   team: string | null;
   espnId: string | null;
   source: string | null;
+  hasManualPositionOverride: boolean;
   updatedAt: string;
 };
 
 type PlayerBrowserProps = {
   players: PlayerBrowserRow[];
+  updatePositionOverrideAction: (formData: FormData) => void | Promise<void>;
+  clearPositionOverrideAction: (formData: FormData) => void | Promise<void>;
 };
 
-export function PlayerBrowser({ players }: PlayerBrowserProps) {
+export function PlayerBrowser({ players, updatePositionOverrideAction, clearPositionOverrideAction }: PlayerBrowserProps) {
   const [sportFilter, setSportFilter] = useState<"ALL" | Sport>("ALL");
   const [positionFilter, setPositionFilter] = useState("ALL");
   const [search, setSearch] = useState("");
@@ -113,11 +117,15 @@ export function PlayerBrowser({ players }: PlayerBrowserProps) {
                     {SPORT_EMOJIS[player.sport]} {SPORT_LABELS[player.sport]} {player.team ? `• ${player.team}` : ""}
                   </p>
                 </div>
-                <span className="rounded-full bg-[var(--surface-strong)] px-2 py-1 text-xs font-semibold text-[var(--muted)]">{player.positions.join(", ") || "No pos"}</span>
+                <span className="rounded-full bg-[var(--surface-strong)] px-2 py-1 text-xs font-semibold text-[var(--muted)]">
+                  {player.positions.join(", ") || "No pos"}
+                  {player.hasManualPositionOverride ? " *" : ""}
+                </span>
               </div>
               <p className="mt-2 text-xs text-[var(--muted)]">
                 {player.source ?? "Unknown source"} {player.espnId ? `• ESPN ${player.espnId}` : ""}
               </p>
+              <PlayerPositionOverrideForm clearAction={clearPositionOverrideAction} player={player} updateAction={updatePositionOverrideAction} />
             </div>
           ))}
         </div>
@@ -133,6 +141,7 @@ export function PlayerBrowser({ players }: PlayerBrowserProps) {
               <th className="px-4 py-3 text-left font-semibold">Team</th>
               <th className="px-4 py-3 text-left font-semibold">ESPN ID</th>
               <th className="px-4 py-3 text-left font-semibold">Source</th>
+              <th className="px-4 py-3 text-left font-semibold">Override</th>
             </tr>
           </thead>
           <tbody>
@@ -142,10 +151,16 @@ export function PlayerBrowser({ players }: PlayerBrowserProps) {
                 <td className="px-4 py-3">
                   {SPORT_EMOJIS[player.sport]} {SPORT_LABELS[player.sport]}
                 </td>
-                <td className="px-4 py-3">{player.positions.join(", ") || "Needs position"}</td>
+                <td className="px-4 py-3">
+                  {player.positions.join(", ") || "Needs position"}
+                  {player.hasManualPositionOverride ? <span className="ml-2 rounded-full bg-sky-100 px-2 py-1 text-xs font-semibold text-sky-700">Manual</span> : null}
+                </td>
                 <td className="px-4 py-3">{player.team ?? "—"}</td>
                 <td className="px-4 py-3">{player.espnId ?? "—"}</td>
                 <td className="px-4 py-3">{player.source ?? "—"}</td>
+                <td className="px-4 py-3">
+                  <PlayerPositionOverrideForm clearAction={clearPositionOverrideAction} player={player} updateAction={updatePositionOverrideAction} />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -154,5 +169,49 @@ export function PlayerBrowser({ players }: PlayerBrowserProps) {
 
       {filteredPlayers.length === 0 ? <div className="border-t border-[var(--border)] px-6 py-8 text-sm text-[var(--muted)]">No players match those filters yet.</div> : null}
     </section>
+  );
+}
+
+function PlayerPositionOverrideForm({
+  player,
+  updateAction,
+  clearAction,
+}: {
+  player: PlayerBrowserRow;
+  updateAction: (formData: FormData) => void | Promise<void>;
+  clearAction: (formData: FormData) => void | Promise<void>;
+}) {
+  return (
+    <div className="mt-3 space-y-2 md:mt-0 md:min-w-72">
+      <form action={updateAction} className="flex flex-col gap-2 xl:flex-row xl:items-center">
+        <input name="playerId" type="hidden" value={player.id} />
+        <input
+          aria-label={`Override positions for ${player.displayName}`}
+          className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-xs"
+          defaultValue={player.positions.join(", ")}
+          list={`position-options-${player.id}`}
+          name="positions"
+          placeholder="SP, RP"
+        />
+        <datalist id={`position-options-${player.id}`}>
+          {POSITION_OPTIONS_BY_SPORT[player.sport].map((position) => (
+            <option key={position} value={position} />
+          ))}
+        </datalist>
+        <button className="rounded-full bg-[var(--accent)] px-3 py-2 text-xs font-semibold text-white" type="submit">
+          Save
+        </button>
+      </form>
+      {player.hasManualPositionOverride ? (
+        <form action={clearAction}>
+          <input name="playerId" type="hidden" value={player.id} />
+          <button className="rounded-full border border-[var(--border)] px-3 py-1 text-xs font-semibold text-[var(--muted)]" type="submit">
+            Clear manual override
+          </button>
+        </form>
+      ) : (
+        <p className="text-xs text-[var(--muted)]">Valid: {POSITION_OPTIONS_BY_SPORT[player.sport].join(", ")}</p>
+      )}
+    </div>
   );
 }
