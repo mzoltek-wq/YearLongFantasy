@@ -73,6 +73,13 @@ test("flags unsupported keeper tags in pasted keeper text", () => {
   assert.deepEqual(entry.invalidKeeperTags, ["K5"]);
 });
 
+test("treats legacy keeper tag as first-year keeper", () => {
+  const [entry] = parseKeeperText("12 Manny Machado (k)");
+
+  assert.equal(entry.keeperTag, "K1");
+  assert.deepEqual(entry.invalidKeeperTags, []);
+});
+
 test("calculates roster totals and validates league totals", () => {
   const owners = [
     { id: "1", name: "Zolt", code: "MZ", createdAt: new Date(), updatedAt: new Date() },

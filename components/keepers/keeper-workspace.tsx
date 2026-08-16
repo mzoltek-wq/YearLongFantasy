@@ -63,7 +63,15 @@ type KeeperFullGridImportLogPayload = {
   rowCount?: number;
   ownerColumnCount?: number;
   targetTotalRounds?: number;
+  nonEmptyCellCount?: number;
+  parsedPlayerEntryCount?: number;
   skippedMissingKeeperTagCount?: number;
+  skippedMissingKeeperTagSamples?: Array<{
+    ownerName?: string;
+    round?: number;
+    rawValue?: string;
+    parsedPlayerName?: string | null;
+  }>;
   importedAt?: string;
   topIssueReasons?: Array<{
     reason?: string;
@@ -227,6 +235,12 @@ export async function KeeperWorkspace({
                   <p className="mt-1 text-sm text-[var(--muted)]">
                     Imported {latestFullGridImportLogPayload.importedTotal ?? 0} keepers across {latestFullGridImportLogPayload.ownerColumnCount ?? 0} owner columns.
                     {latestFullGridImportLogPayload.targetTotalRounds ? ` Target roster size is ${latestFullGridImportLogPayload.targetTotalRounds}.` : ""}
+                    {typeof latestFullGridImportLogPayload.nonEmptyCellCount === "number"
+                      ? ` Read ${latestFullGridImportLogPayload.nonEmptyCellCount} non-empty grid cells.`
+                      : ""}
+                    {typeof latestFullGridImportLogPayload.parsedPlayerEntryCount === "number"
+                      ? ` Parsed ${latestFullGridImportLogPayload.parsedPlayerEntryCount} player-looking entries.`
+                      : ""}
                     {latestFullGridImportLogPayload.skippedMissingKeeperTagCount
                       ? ` Skipped ${latestFullGridImportLogPayload.skippedMissingKeeperTagCount} player-looking cells without keeper tags.`
                       : ""}
@@ -257,6 +271,23 @@ export async function KeeperWorkspace({
                     </div>
                   ))}
                 </div>
+              ) : null}
+
+              {latestFullGridImportLogPayload.skippedMissingKeeperTagSamples && latestFullGridImportLogPayload.skippedMissingKeeperTagSamples.length > 0 ? (
+                <details className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                  <summary className="cursor-pointer font-semibold">Show skipped player-looking cells</summary>
+                  <div className="mt-3 space-y-2">
+                    {latestFullGridImportLogPayload.skippedMissingKeeperTagSamples.map((entry, index) => (
+                      <div className="rounded-lg bg-white px-3 py-2" key={`${entry.ownerName}-${entry.round}-${index}`}>
+                        <p className="font-semibold">
+                          {entry.ownerName ?? "Unknown owner"} · Round {entry.round ?? "?"}
+                        </p>
+                        <p className="text-xs text-[var(--muted)]">{entry.rawValue}</p>
+                        {entry.parsedPlayerName ? <p className="mt-1 text-xs text-[var(--muted)]">Parsed as: {entry.parsedPlayerName}</p> : null}
+                      </div>
+                    ))}
+                  </div>
+                </details>
               ) : null}
 
               {latestFullGridImportLogPayload.placementSamples && latestFullGridImportLogPayload.placementSamples.length > 0 ? (

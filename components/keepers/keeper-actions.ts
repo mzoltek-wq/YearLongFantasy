@@ -514,7 +514,15 @@ export async function importFullKeeperGridText(formData: FormData) {
     const seenPlayerNames = new Set<string>();
     const importedCountByOwnerId = new Map<string, number>();
     const k4CountByOwnerId = new Map<string, number>();
+    let nonEmptyCellCount = 0;
+    let parsedPlayerEntryCount = 0;
     let skippedMissingKeeperTagCount = 0;
+    const skippedMissingKeeperTagSamples: Array<{
+      ownerName: string;
+      round: number;
+      rawValue: string;
+      parsedPlayerName: string | null;
+    }> = [];
     const placementSamples: Array<{
       playerName: string;
       round: number;
@@ -585,6 +593,7 @@ export async function importFullKeeperGridText(formData: FormData) {
         if (!rawValue) {
           continue;
         }
+        nonEmptyCellCount += 1;
 
         if (round > targetTotalRounds) {
           issues.push({
@@ -636,6 +645,7 @@ export async function importFullKeeperGridText(formData: FormData) {
         }
 
         const parsedEntries = parseKeeperText(`${round} ${rawValue}`).filter((entry) => entry.playerName);
+        parsedPlayerEntryCount += parsedEntries.length;
         if (parsedEntries.length === 0) {
           continue;
         }
@@ -675,6 +685,14 @@ export async function importFullKeeperGridText(formData: FormData) {
 
         if (!entry.keeperTag) {
           skippedMissingKeeperTagCount += 1;
+          if (skippedMissingKeeperTagSamples.length < 12) {
+            skippedMissingKeeperTagSamples.push({
+              ownerName: currentOwner.name,
+              round,
+              rawValue,
+              parsedPlayerName: entry.playerName,
+            });
+          }
           continue;
         }
 
@@ -848,7 +866,10 @@ export async function importFullKeeperGridText(formData: FormData) {
           rowCount: Math.max(rows.length - headerIndex - 1, 0),
           ownerColumnCount: ownerColumns.length,
           targetTotalRounds,
+          nonEmptyCellCount,
+          parsedPlayerEntryCount,
           skippedMissingKeeperTagCount,
+          skippedMissingKeeperTagSamples,
           topIssueReasons,
           placementSamples,
           importedCountByOwner: owners.map((owner) => ({
