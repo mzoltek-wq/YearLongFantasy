@@ -41,6 +41,7 @@ The next-generation league model is being added alongside the original working d
 ## Near-Term Notes
 
 - Add roster-progress status to the mobile draft tracker so people can see each owner's total and per-sport counts without opening the full commissioner draft page.
+- Add an AI-assisted player metadata lookup flow for roster entry: when a player name is typed, suggest sport and position, require commissioner confirmation, then save the confirmed metadata for future imports/exports.
 
 ## Local Setup
 
