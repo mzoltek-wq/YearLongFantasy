@@ -1,12 +1,14 @@
 import { Sport } from "@prisma/client";
 
 import { ImportablePlayerRecord } from "@/lib/players/import";
+import { normalizePlayerName } from "@/lib/utils/draft";
 
 type EspnSportConfig = {
   game: string;
   sport: Sport;
   label: string;
-  positions: Record<number, string>;
+  defaultPositions: Record<number, string>;
+  eligibleSlotPositions: Record<number, string>;
 };
 
 const ESPN_SPORTS: EspnSportConfig[] = [
@@ -14,57 +16,73 @@ const ESPN_SPORTS: EspnSportConfig[] = [
     game: "ffl",
     sport: Sport.FOOTBALL,
     label: "Football",
-    positions: {
+    defaultPositions: {
       1: "QB",
       2: "RB",
       3: "WR",
       4: "TE",
       5: "K",
       16: "DST",
-      23: "FLEX",
     },
+    eligibleSlotPositions: {},
   },
   {
     game: "flb",
     sport: Sport.BASEBALL,
     label: "Baseball",
-    positions: {
+    defaultPositions: {},
+    eligibleSlotPositions: {
       0: "C",
       1: "1B",
       2: "2B",
       3: "3B",
       4: "SS",
       5: "OF",
-      7: "DH",
-      8: "SP",
-      9: "RP",
-      10: "P",
-      11: "IF",
-      12: "UTIL",
+      6: "2B SS",
+      7: "1B 3B",
+      8: "OF",
+      9: "OF",
+      10: "OF",
+      11: "DH",
+      14: "SP",
+      15: "RP",
     },
   },
   {
     game: "fba",
     sport: Sport.BASKETBALL,
     label: "Basketball",
-    positions: {
+    defaultPositions: {
       1: "PG",
       2: "SG",
       3: "SF",
       4: "PF",
       5: "C",
-      11: "G",
-      12: "F",
+    },
+    eligibleSlotPositions: {
+      0: "PG",
+      1: "SG",
+      2: "SF",
+      3: "PF",
+      4: "C",
     },
   },
   {
     game: "fhl",
     sport: Sport.HOCKEY,
     label: "Hockey",
-    positions: {
+    defaultPositions: {
       1: "C",
       2: "LW",
       3: "RW",
+      4: "D",
+      5: "G",
+    },
+    eligibleSlotPositions: {
+      0: "C",
+      1: "LW",
+      2: "RW",
+      3: "C",
       4: "D",
       5: "G",
     },
@@ -111,9 +129,9 @@ export async function fetchEspnPlayerRecords({ season, limit = 2500 }: { season:
           return [];
         }
 
-        const primaryPosition = mapEspnPosition(config, player.defaultPositionId);
+        const primaryPosition = mapEspnDefaultPosition(config, player.defaultPositionId);
         const eligiblePositions = (player.eligibleSlots ?? [])
-          .map((slot) => mapEspnPosition(config, slot))
+          .map((slot) => mapEspnEligibleSlotPosition(config, slot))
           .filter((position): position is string => Boolean(position))
           .filter((position) => !["FLEX", "OP", "UTIL", "IF", "P"].includes(position));
 
@@ -135,7 +153,7 @@ export async function fetchEspnPlayerRecords({ season, limit = 2500 }: { season:
         ];
       });
 
-      records.push(...sportRecords);
+      records.push(...dedupeEspnRecords(sportRecords));
     } catch (error) {
       failures.push({ sport: config.label, message: error instanceof Error ? error.message : "ESPN request failed" });
     }
@@ -169,6 +187,33 @@ async function fetchEspnSportResponse(config: EspnSportConfig, season: number, f
   throw new Error(lastResponse ? `${lastResponse.status} ${lastResponse.statusText}` : "ESPN request failed");
 }
 
-function mapEspnPosition(config: EspnSportConfig, id: number | undefined) {
-  return id == null ? null : config.positions[id] ?? null;
+function mapEspnDefaultPosition(config: EspnSportConfig, id: number | undefined) {
+  return id == null ? null : config.defaultPositions[id] ?? null;
+}
+
+function mapEspnEligibleSlotPosition(config: EspnSportConfig, id: number | undefined) {
+  return id == null ? null : config.eligibleSlotPositions[id] ?? null;
+}
+
+function dedupeEspnRecords(records: ImportablePlayerRecord[]) {
+  const byName = new Map<string, ImportablePlayerRecord>();
+
+  for (const record of records) {
+    const key = normalizePlayerName(record.displayName);
+    const current = byName.get(key);
+
+    if (!current || scoreEspnRecord(record) > scoreEspnRecord(current)) {
+      byName.set(key, record);
+    }
+  }
+
+  return Array.from(byName.values());
+}
+
+function scoreEspnRecord(record: ImportablePlayerRecord) {
+  const raw = record.raw ?? {};
+  const proTeamId = Number(raw.proTeamId ?? 0);
+  const positionCount = [record.primaryPosition, ...(record.eligiblePositions ?? [])].filter(Boolean).length;
+
+  return (proTeamId > 0 ? 1000 : 0) + positionCount;
 }
