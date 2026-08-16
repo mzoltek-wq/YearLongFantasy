@@ -304,22 +304,23 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner" }: Dra
 
         <div className="space-y-6">
           {isTrackerMode ? (
-            <div className="rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-6">
-              <div className="space-y-3">
-                <h2 className="text-2xl font-semibold">{snapshot.draftWindow.completed ? "Draft complete" : `Round ${currentPick?.round}`}</h2>
-                {currentPick ? (
-                  <div className="space-y-1 text-sm text-[var(--muted)]">
-                    <p>
-                      Currently up <span className="font-semibold text-[var(--ink)]">{currentPick.currentOwner.name}</span>
-                    </p>
-                    <p>
-                      Next up <span className="font-semibold text-[var(--ink)]">{nextPick?.currentOwner.name ?? "End of draft"}</span>
-                    </p>
-                  </div>
-                ) : (
-                  <p className="text-sm text-[var(--muted)]">All picks are currently filled.</p>
-                )}
-              </div>
+            <div className="sticky top-2 z-20 rounded-[22px] border border-[var(--border)] bg-[var(--surface)]/95 px-4 py-3 shadow-lg shadow-slate-900/5 backdrop-blur">
+              {currentPick ? (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[var(--muted)]">
+                  <span className="text-base font-semibold text-[var(--ink)]">
+                    R{currentPick.round} · Pick {currentPick.overallPickNumber}
+                  </span>
+                  <span>
+                    Up <span className="font-semibold text-[var(--ink)]">{currentPick.currentOwner.name}</span>
+                  </span>
+                  <span className="hidden text-[var(--border)] sm:inline">/</span>
+                  <span>
+                    Next <span className="font-semibold text-[var(--ink)]">{nextPick?.currentOwner.name ?? "End"}</span>
+                  </span>
+                </div>
+              ) : (
+                <p className="text-sm font-semibold text-[var(--ink)]">{snapshot.draftWindow.completed ? "Draft complete" : "All picks are currently filled."}</p>
+              )}
             </div>
           ) : null}
 
