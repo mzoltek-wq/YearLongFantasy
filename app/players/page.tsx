@@ -13,6 +13,13 @@ type PlayersPageProps = {
 export default async function PlayersPage({ searchParams }: PlayersPageProps) {
   const resolvedSearchParams = (await searchParams) ?? {};
   const players = await prisma.player.findMany({
+    select: {
+      id: true,
+      displayName: true,
+      sport: true,
+      metadata: true,
+      updatedAt: true,
+    },
     orderBy: [{ sport: "asc" }, { displayName: "asc" }],
   });
   const browserRows: PlayerBrowserRow[] = players.map((player) => {

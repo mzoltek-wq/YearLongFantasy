@@ -125,7 +125,12 @@ export async function fetchEspnPlayerRecords({ season, limit = 2500 }: { season:
             primaryPosition,
             eligiblePositions: Array.from(new Set([primaryPosition, ...eligiblePositions].filter(Boolean) as string[])),
             source: "ESPN",
-            raw: player as Record<string, unknown>,
+            raw: {
+              defaultPositionId: player.defaultPositionId ?? null,
+              eligibleSlots: player.eligibleSlots ?? [],
+              espnId: player.id ?? null,
+              proTeamId: player.proTeamId ?? null,
+            },
           },
         ];
       });
