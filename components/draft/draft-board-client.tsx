@@ -52,6 +52,8 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner" }: Dra
   const currentPick = snapshot.draftWindow.currentPick;
   const nextPick = snapshot.draftWindow.nextPick;
   const isTrackerMode = mode === "tracker";
+  const recentPickLimit = isTrackerMode ? 10 : 5;
+  const upcomingPickLimit = isTrackerMode ? 10 : 5;
   const completedPicks = useMemo(
     () =>
       [...snapshot.slots]
@@ -63,14 +65,14 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner" }: Dra
         }),
     [snapshot.slots],
   );
-  const lastFivePicks = completedPicks.slice(0, 5);
+  const recentPickList = completedPicks.slice(0, recentPickLimit);
   const recentPickGridSlots = completedPicks.slice(0, 25);
   const upcomingPicks = useMemo(
     () =>
       snapshot.slots
         .filter((slot) => !slot.selectedPlayerName)
-        .slice(0, 5),
-    [snapshot.slots],
+        .slice(0, upcomingPickLimit),
+    [snapshot.slots, upcomingPickLimit],
   );
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
   const searchResults = useMemo(() => {
@@ -322,14 +324,14 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner" }: Dra
           ) : null}
 
           <div className="grid gap-6 lg:grid-cols-2">
-            <section className="rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-6">
+            <section className={`rounded-[28px] border border-[var(--border)] bg-[var(--surface)] ${isTrackerMode ? "p-4 sm:p-5" : "p-6"}`}>
               <p className="text-xs uppercase tracking-[0.4em] text-[var(--muted)]">Recent picks</p>
-              <div className="mt-4 space-y-3">
-                {lastFivePicks.length === 0 ? (
+              <div className={`${isTrackerMode ? "mt-3 space-y-2" : "mt-4 space-y-3"}`}>
+                {recentPickList.length === 0 ? (
                   <p className="text-sm text-[var(--muted)]">No picks have been made yet.</p>
                 ) : (
-                  lastFivePicks.map((slot) => (
-                    <div className="rounded-2xl border border-[var(--border)] px-4 py-3" key={slot.id}>
+                  recentPickList.map((slot) => (
+                    <div className={`rounded-2xl border border-[var(--border)] ${isTrackerMode ? "px-3 py-2.5" : "px-4 py-3"}`} key={slot.id}>
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <p className="font-semibold">{slot.selectedPlayerName}</p>
@@ -337,7 +339,10 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner" }: Dra
                             Pick {slot.overallPickNumber} • {slot.currentOwner.name}
                           </p>
                         </div>
-                        <div className="text-sm text-[var(--muted)]">{slot.selectedSport ? `${SPORT_EMOJIS[slot.selectedSport]} ${SPORT_LABELS[slot.selectedSport]}` : "—"}</div>
+                        <div className="shrink-0 text-right text-xs text-[var(--muted)]">
+                          <p>{slot.selectedSport ? `${SPORT_EMOJIS[slot.selectedSport]} ${SPORT_LABELS[slot.selectedSport]}` : "—"}</p>
+                          <p className="mt-1 rounded-full bg-[var(--surface-strong)] px-2 py-0.5 font-semibold">{slot.isKeeper ? "Keeper" : "Live pick"}</p>
+                        </div>
                       </div>
                     </div>
                   ))
@@ -345,14 +350,14 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner" }: Dra
               </div>
             </section>
 
-            <section className="rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-6">
+            <section className={`rounded-[28px] border border-[var(--border)] bg-[var(--surface)] ${isTrackerMode ? "p-4 sm:p-5" : "p-6"}`}>
               <p className="text-xs uppercase tracking-[0.4em] text-[var(--muted)]">Upcoming picks</p>
-              <div className="mt-4 space-y-3">
+              <div className={`${isTrackerMode ? "mt-3 space-y-2" : "mt-4 space-y-3"}`}>
                 {upcomingPicks.length === 0 ? (
                   <p className="text-sm text-[var(--muted)]">No upcoming picks.</p>
                 ) : (
                   upcomingPicks.map((slot) => (
-                    <div className="rounded-2xl border border-[var(--border)] px-4 py-3" key={slot.id}>
+                    <div className={`rounded-2xl border border-[var(--border)] ${isTrackerMode ? "px-3 py-2.5" : "px-4 py-3"}`} key={slot.id}>
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <p className="font-semibold">
