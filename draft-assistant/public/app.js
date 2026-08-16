@@ -435,19 +435,7 @@ function bestAvailableScore(player) {
 }
 
 function comparePlayers(left, right) {
-  const leftPositionIndex = positionSortIndex(left);
-  const rightPositionIndex = positionSortIndex(right);
-  if (leftPositionIndex !== rightPositionIndex) {
-    return leftPositionIndex - rightPositionIndex;
-  }
-
   return bestAvailableScore(left) - bestAvailableScore(right);
-}
-
-function positionSortIndex(player) {
-  const order = POSITION_GROUPS[player.sport]?.map(([positionGroup]) => positionGroup).filter((positionGroup) => positionGroup !== "ALL") ?? [];
-  const index = order.indexOf(normalizePositionGroup(player));
-  return index === -1 ? 999 : index;
 }
 
 function normalizePlayerForClient(player) {
@@ -740,13 +728,13 @@ async function syncAllFantasyPros() {
   if (!season) {
     return;
   }
-  const confirmed = confirm("This will sync consensus rankings by position for Hockey, Baseball, Football, and Basketball across both boards. It uses about 46 FantasyPros API calls and spaces them out to stay under the 1 request/second limit, so it can take about 70 seconds. Continue?");
+  const confirmed = confirm("This will sync overall consensus rankings for Hockey, Baseball, Football, and Basketball across both boards. It uses about 8 FantasyPros API calls and spaces them out to stay under the 1 request/second limit. Continue?");
   if (!confirmed) {
     return;
   }
 
   elements.syncAllFantasyProsButton.disabled = true;
-  elements.syncAllFantasyProsButton.textContent = "Syncing boards slowly...";
+  elements.syncAllFantasyProsButton.textContent = "Syncing overall boards...";
 
   try {
     const result = await requestJson("/api/sync/fantasypros/all", {

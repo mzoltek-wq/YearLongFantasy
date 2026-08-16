@@ -15,13 +15,6 @@ const FANTASYPROS_BATCH_SPORTS = ["HOCKEY", "BASEBALL", "FOOTBALL", "BASKETBALL"
 const BOARDS = ["redraft", "dynasty"];
 const DEFAULT_RANKING_LIMIT = 500;
 const FANTASYPROS_BATCH_DELAY_MS = 1500;
-const FANTASYPROS_CONSENSUS_POSITIONS = {
-  HOCKEY: ["C", "LW", "RW", "D", "G"],
-  BASEBALL: ["C", "1B", "2B", "3B", "SS", "OF", "SP", "RP"],
-  FOOTBALL: ["QB", "RB", "WR", "TE", "DST"],
-  BASKETBALL: ["PG", "SG", "SF", "PF", "C"],
-  GOLF: ["ALL"],
-};
 
 const defaultState = {
   players: [],
@@ -226,7 +219,9 @@ const server = createServer(async (request, response) => {
       const limit = Number(payload.limit ?? DEFAULT_RANKING_LIMIT);
       const state = await loadState();
       const result = await fetchFantasyProsRankings({ sport, boardType, season, position, limit, apiKey: getFantasyProsApiKey(state) });
-      state.players = mergePlayers(state.players, result.players);
+      state.players = position === "ALL"
+        ? replaceProviderPlayers(state.players, result.players, { sport, boardType, sources: ["FantasyPros", "FantasyPros Consensus"] })
+        : mergePlayers(state.players, result.players);
       state.syncs.unshift({
         source: "FantasyPros",
         sport,
@@ -273,7 +268,7 @@ const server = createServer(async (request, response) => {
                 limit,
                 apiKey: getFantasyProsApiKey(state),
               });
-              state.players = mergePlayers(state.players, result.players);
+              state.players = replaceProviderPlayers(state.players, result.players, { sport, boardType, sources: ["FantasyPros", "FantasyPros Consensus"] });
               results.push({
                 sport,
                 boardType,
@@ -602,16 +597,24 @@ function normalizeName(value) {
 }
 
 function mergePlayers(existingPlayers, incomingPlayers) {
-  const byKey = new Map(existingPlayers.map((player) => [`${player.sport}:${player.boardType}:${player.normalizedName}:${player.source}`, player]));
+  const byKey = new Map(existingPlayers.map((player) => [`${player.sport}:${player.boardType}:${player.normalizedName}`, player]));
 
   for (const player of incomingPlayers) {
-    byKey.set(`${player.sport}:${player.boardType}:${player.normalizedName}:${player.source}`, {
-      ...(byKey.get(`${player.sport}:${player.boardType}:${player.normalizedName}:${player.source}`) ?? {}),
+    byKey.set(`${player.sport}:${player.boardType}:${player.normalizedName}`, {
+      ...(byKey.get(`${player.sport}:${player.boardType}:${player.normalizedName}`) ?? {}),
       ...player,
     });
   }
 
   return Array.from(byKey.values()).sort((left, right) => (left.rank ?? 9999) - (right.rank ?? 9999));
+}
+
+function replaceProviderPlayers(existingPlayers, incomingPlayers, { sport, boardType, sources }) {
+  const sourceSet = new Set(sources);
+  return mergePlayers(
+    existingPlayers.filter((player) => player.sport !== sport || player.boardType !== boardType || !sourceSet.has(player.source)),
+    incomingPlayers,
+  );
 }
 
 async function fetchLeagueUnavailablePlayers(leagueAppUrl) {
@@ -713,14 +716,14 @@ function derivePosition(raw) {
   return (
     raw?.position ??
     raw?.pos ??
-    raw?.player_position_id ??
-    raw?.primary_position ??
-    raw?.position_id ??
-    raw?.player_positions ??
-    raw?.player_eligibility ??
     raw?.player_espn_positions ??
     raw?.player_yahoo_positions ??
     raw?.player_cbs_positions ??
+    raw?.player_positions ??
+    raw?.player_eligibility ??
+    raw?.primary_position ??
+    raw?.player_position_id ??
+    raw?.position_id ??
     ""
   );
 }
@@ -744,7 +747,7 @@ function getFantasyProsConsensusPositions(sport, requestedPosition) {
     return [requestedPosition];
   }
 
-  return FANTASYPROS_CONSENSUS_POSITIONS[sport] ?? ["ALL"];
+  return ["ALL"];
 }
 
 async function fetchFantasyProsRankings({ sport, boardType, season, position, limit = DEFAULT_RANKING_LIMIT, apiKey }) {
