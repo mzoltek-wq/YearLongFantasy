@@ -1,10 +1,16 @@
-import { DraftSlot, Prisma, Sport } from "@prisma/client";
+import { DraftSelectionType, DraftSlot, Prisma, Sport } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
 import { pushDraftPickWriteback } from "@/lib/import/google-sheets";
 import { DraftSlotWithRelations, KeeperWithRelations, LeagueSnapshot } from "@/lib/types/draft";
 import { normalizePlayerName } from "@/lib/utils/draft";
 import { calculateRosterTotals, getCurrentDraftWindow, validateDraftIntegrity, validateLeagueTotals } from "@/lib/validation/draft";
+
+const CURRENT_DRAFT_GRID_YEAR = 2026;
+
+function normalizePersonKey(value: string) {
+  return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
 
 export async function getLeagueSnapshot(): Promise<LeagueSnapshot> {
   const [owners, ownerCodes, rawSlots, keepers, rosterLimits, settings] = await prisma.$transaction([
@@ -115,6 +121,85 @@ async function enforceOwnerSportLimit(
   }
 }
 
+async function findManagerForOwner(tx: Prisma.TransactionClient, ownerId: string) {
+  const owner = await tx.owner.findUnique({
+    where: { id: ownerId },
+  });
+
+  if (!owner) {
+    return null;
+  }
+
+  const managers = await tx.manager.findMany();
+  const ownerNameKey = normalizePersonKey(owner.name);
+
+  return (
+    managers.find((manager) => manager.code.toUpperCase() === owner.code.toUpperCase()) ??
+    managers.find((manager) => normalizePersonKey(manager.name) === ownerNameKey || normalizePersonKey(manager.displayName ?? "") === ownerNameKey) ??
+    managers.find((manager) => normalizePersonKey(manager.name).startsWith(ownerNameKey) || ownerNameKey.startsWith(normalizePersonKey(manager.name))) ??
+    managers.find((manager) => {
+      const displayKey = normalizePersonKey(manager.displayName ?? "");
+      return Boolean(displayKey) && (displayKey.startsWith(ownerNameKey) || ownerNameKey.startsWith(displayKey));
+    }) ??
+    null
+  );
+}
+
+async function syncDraftGridSlotFromDraftSlot({
+  tx,
+  slot,
+  playerId,
+  playerName,
+  sport,
+  selectionType,
+  originalRawValue,
+  selectedAt,
+}: {
+  tx: Prisma.TransactionClient;
+  slot: Pick<DraftSlot, "overallPickNumber" | "currentOwnerId">;
+  playerId: string | null;
+  playerName: string | null;
+  sport: Sport | null;
+  selectionType: DraftSelectionType;
+  originalRawValue: string | null;
+  selectedAt: Date | null;
+}) {
+  const [season, currentManager] = await Promise.all([
+    tx.leagueSeason.findFirst({
+      where: { year: CURRENT_DRAFT_GRID_YEAR },
+      include: {
+        drafts: {
+          orderBy: { createdAt: "asc" },
+          take: 1,
+        },
+      },
+    }),
+    findManagerForOwner(tx, slot.currentOwnerId),
+  ]);
+  const draft = season?.drafts[0];
+
+  if (!draft || !currentManager) {
+    return;
+  }
+
+  await tx.draftGridSlot.updateMany({
+    where: {
+      draftId: draft.id,
+      overallPickNumber: slot.overallPickNumber,
+    },
+    data: {
+      currentManagerId: currentManager.id,
+      playerId,
+      playerName,
+      sport,
+      selectionType,
+      keeperStatus: null,
+      rawCellValue: originalRawValue,
+      selectedAt,
+    },
+  });
+}
+
 export async function makeDraftPick(input: {
   overallPickNumber: number;
   playerName: string;
@@ -152,6 +237,8 @@ export async function makeDraftPick(input: {
     });
 
     const player = await upsertPlayer(tx, input.playerName.trim(), input.sport);
+    const selectedAt = new Date();
+    const originalRawValue = input.playerName.trim();
 
     await tx.draftSlot.update({
       where: { id: slot.id },
@@ -159,9 +246,19 @@ export async function makeDraftPick(input: {
         selectedPlayerId: player.id,
         selectedPlayerName: player.displayName,
         selectedSport: input.sport,
-        selectedAt: new Date(),
-        originalRawValue: `${input.playerName.trim()}`,
+        selectedAt,
+        originalRawValue,
       },
+    });
+    await syncDraftGridSlotFromDraftSlot({
+      tx,
+      slot,
+      playerId: player.id,
+      playerName: player.displayName,
+      sport: input.sport,
+      selectionType: DraftSelectionType.DRAFTED,
+      originalRawValue,
+      selectedAt,
     });
 
     await syncCurrentPick(tx);
@@ -210,6 +307,8 @@ export async function updateDraftPick(input: {
     });
 
     const player = await upsertPlayer(tx, input.playerName.trim(), input.sport);
+    const selectedAt = new Date();
+    const originalRawValue = input.playerName.trim();
 
     await tx.draftSlot.update({
       where: { id: slot.id },
@@ -217,9 +316,19 @@ export async function updateDraftPick(input: {
         selectedPlayerId: player.id,
         selectedPlayerName: player.displayName,
         selectedSport: input.sport,
-        selectedAt: new Date(),
-        originalRawValue: `${input.playerName.trim()}`,
+        selectedAt,
+        originalRawValue,
       },
+    });
+    await syncDraftGridSlotFromDraftSlot({
+      tx,
+      slot,
+      playerId: player.id,
+      playerName: player.displayName,
+      sport: input.sport,
+      selectionType: DraftSelectionType.DRAFTED,
+      originalRawValue,
+      selectedAt,
     });
 
     await syncCurrentPick(tx);
@@ -254,6 +363,16 @@ export async function undoDraftPick(overallPickNumber: number) {
         selectedAt: null,
         originalRawValue: null,
       },
+    });
+    await syncDraftGridSlotFromDraftSlot({
+      tx,
+      slot,
+      playerId: null,
+      playerName: null,
+      sport: null,
+      selectionType: DraftSelectionType.OPEN,
+      originalRawValue: null,
+      selectedAt: null,
     });
 
     await syncCurrentPick(tx);
