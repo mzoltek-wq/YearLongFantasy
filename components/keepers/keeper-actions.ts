@@ -10,7 +10,6 @@ import { buildSnakeDraftOrder, normalizePlayerName, parseSportFromValue } from "
 
 const MANUAL_KEEPER_IMPORT_SOURCE_ID = "manual-keeper-import-source";
 const OWNER_CODE_TOKEN_REGEX = /\(([A-Z]{2})\)/i;
-const OWNER_CODE_TOKEN_GLOBAL_REGEX = /\(([A-Z]{2})\)/gi;
 const KEEPER_TAG_VALUES = new Set(["K1", "K2", "K3", "K4"]);
 
 function revalidateKeeperViews() {
@@ -122,11 +121,13 @@ async function applyKeeperEntry({
 async function applyGridKeeperEntry({
   slotId,
   owner,
+  overrideOwnerCode,
   entry,
   sport,
 }: {
   slotId: string;
   owner: Owner;
+  overrideOwnerCode: string | null;
   entry: ParsedKeeperTextEntry;
   sport: Sport;
 }) {
@@ -157,7 +158,7 @@ async function applyGridKeeperEntry({
       where: { id: slotId },
       data: {
         currentOwnerId: owner.id,
-        overrideOwnerCode: entry.pickOwnerCode,
+        overrideOwnerCode,
         selectedPlayerId: player.id,
         selectedPlayerName: player.displayName,
         selectedSport: sport,
@@ -181,7 +182,7 @@ async function applyGridKeeperEntry({
 }
 
 function getOwnerCodeFromRawValue(rawValue: string, ownerByCode: Map<string, Owner>) {
-  for (const match of rawValue.matchAll(OWNER_CODE_TOKEN_GLOBAL_REGEX)) {
+  for (const match of rawValue.matchAll(/\(([A-Z]{2})\)/gi)) {
     const code = match[1]?.toUpperCase();
     if (code && ownerByCode.has(code)) {
       return code;
@@ -469,6 +470,14 @@ export async function importFullKeeperGridText(formData: FormData) {
     const seenPlayerNames = new Set<string>();
     const importedCountByOwnerId = new Map<string, number>();
     const k4CountByOwnerId = new Map<string, number>();
+    const placementSamples: Array<{
+      playerName: string;
+      round: number;
+      originalPickOwner: string;
+      assignedOwner: string;
+      ownerCode: string | null;
+      rawValue: string;
+    }> = [];
 
     await prisma.keeper.deleteMany();
     await prisma.importedRecord.deleteMany({
@@ -532,10 +541,14 @@ export async function importFullKeeperGridText(formData: FormData) {
           continue;
         }
 
-        const slot = slotByRoundAndDefaultOwner.get(`${round}:${ownerColumn.owner.id}`);
+        const pickOwnerCode = getOwnerCodeFromRawValue(rawValue, ownerByCode);
+        const pickOwner = pickOwnerCode ? ownerByCode.get(pickOwnerCode)! : ownerColumn.owner;
+        const currentOwner = ownerColumn.owner;
+        const appliedOverrideCode = currentOwner.id === pickOwner.id ? null : currentOwner.code;
+        const slot = slotByRoundAndDefaultOwner.get(`${round}:${pickOwner.id}`);
         if (!slot) {
           issues.push({
-            owner: ownerColumn.owner,
+            owner: currentOwner,
             entry: {
               round,
               rawValue,
@@ -545,14 +558,10 @@ export async function importFullKeeperGridText(formData: FormData) {
               invalidKeeperTags: [],
               pickOwnerCode: null,
             },
-            reason: `Could not find ${ownerColumn.owner.name}'s pick in round ${round}.`,
+            reason: `Could not find ${pickOwner.name}'s pick in round ${round}.`,
           });
           continue;
         }
-
-        const overrideCode = getOwnerCodeFromRawValue(rawValue, ownerByCode);
-        const currentOwner = overrideCode ? ownerByCode.get(overrideCode)! : ownerColumn.owner;
-        const appliedOverrideCode = currentOwner.id === ownerColumn.owner.id ? null : overrideCode;
 
         if (appliedOverrideCode) {
           await prisma.draftSlot.update({
@@ -574,7 +583,7 @@ export async function importFullKeeperGridText(formData: FormData) {
             owner: currentOwner,
             entry: {
               ...parsedEntries[0],
-              pickOwnerCode: overrideCode,
+              pickOwnerCode,
             },
             reason: "This grid cell contains multiple players. One draft slot can only hold one keeper.",
           });
@@ -583,7 +592,7 @@ export async function importFullKeeperGridText(formData: FormData) {
 
         const entry = {
           ...parsedEntries[0],
-          pickOwnerCode: appliedOverrideCode,
+          pickOwnerCode,
         };
 
         if (!entry.playerName) {
@@ -624,8 +633,18 @@ export async function importFullKeeperGridText(formData: FormData) {
         }
 
         try {
-          await applyGridKeeperEntry({ slotId: slot.id, owner: currentOwner, entry, sport });
+          await applyGridKeeperEntry({ slotId: slot.id, owner: currentOwner, overrideOwnerCode: appliedOverrideCode, entry, sport });
           importedCountByOwnerId.set(currentOwner.id, (importedCountByOwnerId.get(currentOwner.id) ?? 0) + 1);
+          if (placementSamples.length < 30) {
+            placementSamples.push({
+              playerName: entry.playerName,
+              round,
+              originalPickOwner: pickOwner.name,
+              assignedOwner: currentOwner.name,
+              ownerCode: pickOwnerCode,
+              rawValue,
+            });
+          }
         } catch (error) {
           issues.push({ owner: currentOwner, entry, reason: error instanceof Error ? error.message : "Could not place this keeper." });
         }
@@ -729,6 +748,7 @@ export async function importFullKeeperGridText(formData: FormData) {
           rowCount: Math.max(rows.length - headerIndex - 1, 0),
           ownerColumnCount: ownerColumns.length,
           topIssueReasons,
+          placementSamples,
           importedCountByOwner: owners.map((owner) => ({
             ownerId: owner.id,
             ownerName: owner.name,
@@ -742,9 +762,16 @@ export async function importFullKeeperGridText(formData: FormData) {
     });
 
     revalidateKeeperViews();
+    const reasonSummary =
+      topIssueReasons.length > 0
+        ? ` Top issues: ${topIssueReasons
+            .slice(0, 3)
+            .map((entry) => `${entry.count}x ${entry.reason}`)
+            .join("; ")}.`
+        : "";
     redirectPath = keeperFeedbackPath(
       issues.length > 0 ? "error" : "success",
-      `Full grid import complete. Imported ${importedTotal} keepers with ${issues.length} issue${issues.length === 1 ? "" : "s"}.`,
+      `Full grid import complete. Imported ${importedTotal} keepers with ${issues.length} issue${issues.length === 1 ? "" : "s"}.${reasonSummary}`,
     );
   } catch (error) {
     redirectPath = keeperFeedbackPath("error", error instanceof Error ? error.message : "Could not import the full keeper grid.");
