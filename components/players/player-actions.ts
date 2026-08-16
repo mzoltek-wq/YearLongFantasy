@@ -26,9 +26,7 @@ export async function importPlayersText(formData: FormData) {
       throw new Error("No player rows could be parsed.");
     }
 
-    const result = await prisma.$transaction((tx) => importPlayerRecords(tx, records), {
-      timeout: 20000,
-    });
+    const result = await importPlayerRecords(prisma, records);
 
     revalidatePlayersViews();
     redirectPath = playersFeedbackPath(
@@ -54,9 +52,7 @@ export async function importEspnPlayers(formData: FormData) {
       throw new Error(`ESPN returned zero players. ${failures.map((failure) => `${failure.sport}: ${failure.message}`).join("; ")}`);
     }
 
-    const result = await prisma.$transaction((tx) => importPlayerRecords(tx, records), {
-      timeout: 30000,
-    });
+    const result = await importPlayerRecords(prisma, records);
     const failureMessage = failures.length > 0 ? ` ${failures.length} sport request${failures.length === 1 ? "" : "s"} failed.` : "";
 
     revalidatePlayersViews();

@@ -257,3 +257,9 @@ test("basketball roster fit can move a PF/C into center when needed", () => {
   const wembySlot = fit.assignments.find((assignment) => assignment.player?.id === "wemby")?.slot;
   assert.equal(wembySlot, "C");
 });
+
+test("hockey normalization preserves defensemen and goalies", () => {
+  assert.deepEqual(normalizePositions(Sport.HOCKEY, ["D"]), ["D"]);
+  assert.deepEqual(normalizePositions(Sport.HOCKEY, ["G"]), ["G"]);
+  assert.deepEqual(normalizePositions(Sport.HOCKEY, ["C,LW,RW"]), ["F"]);
+});

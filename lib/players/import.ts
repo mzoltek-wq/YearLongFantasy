@@ -21,6 +21,12 @@ export type PlayerImportResult = {
   skipped: string[];
 };
 
+type PlayerWriter = Pick<Prisma.TransactionClient, "player">;
+type PlayerImportOptions = {
+  concurrency?: number;
+  onProgress?: (progress: { processed: number; total: number; imported: number; unresolved: number }) => void;
+};
+
 const SPORT_NAME_TO_ENUM: Record<string, Sport> = {
   HOCKEY: Sport.HOCKEY,
   NHL: Sport.HOCKEY,
@@ -66,22 +72,25 @@ export function parsePlayerImportText(text: string, source = "manual-player-impo
   });
 }
 
-export async function importPlayerRecords(tx: Prisma.TransactionClient, records: ImportablePlayerRecord[]): Promise<PlayerImportResult> {
+export async function importPlayerRecords(db: PlayerWriter, records: ImportablePlayerRecord[], options: PlayerImportOptions = {}): Promise<PlayerImportResult> {
   const skipped: string[] = [];
   let imported = 0;
   let unresolved = 0;
+  let processed = 0;
+  let cursor = 0;
+  const concurrency = Math.max(1, Math.min(options.concurrency ?? 8, 20));
 
-  for (const record of records) {
+  async function importRecord(record: ImportablePlayerRecord) {
     const displayName = record.displayName.trim();
     const positions = normalizePositions(record.sport, [record.primaryPosition, ...(record.eligiblePositions ?? [])]);
 
     if (!displayName || !record.sport) {
       unresolved += 1;
       skipped.push(record.raw?.row ? String(record.raw.row) : displayName || "Unknown row");
-      continue;
+      return;
     }
 
-    await tx.player.upsert({
+    await db.player.upsert({
       where: { normalizedName: normalizePlayerName(displayName) },
       update: {
         displayName,
@@ -97,6 +106,21 @@ export async function importPlayerRecords(tx: Prisma.TransactionClient, records:
     });
     imported += 1;
   }
+
+  async function worker() {
+    while (cursor < records.length) {
+      const record = records[cursor];
+      cursor += 1;
+      await importRecord(record);
+      processed += 1;
+
+      if (processed % 250 === 0 || processed === records.length) {
+        options.onProgress?.({ processed, total: records.length, imported, unresolved });
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, records.length) }, () => worker()));
 
   return {
     imported,

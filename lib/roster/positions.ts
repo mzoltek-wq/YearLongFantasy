@@ -126,8 +126,13 @@ export function normalizePositions(sport: Sport, rawPositions: Array<string | nu
         return;
       }
 
-      if (sport === Sport.HOCKEY && ["C", "LW", "RW"].includes(position)) {
+      if (sport === Sport.HOCKEY && ["C", "LW", "RW", "F"].includes(position)) {
         positions.add("F");
+        return;
+      }
+
+      if (sport === Sport.HOCKEY && ["D", "G"].includes(normalized)) {
+        positions.add(normalized);
         return;
       }
 
@@ -170,6 +175,7 @@ export function extractPositionsFromMetadata(sport: Sport, metadata: unknown) {
     record.positionGroup,
     record.positions,
     record.espnPositions,
+    record.eligiblePositions,
     record.playerPositions,
     raw.player_espn_positions,
     raw.player_positions,

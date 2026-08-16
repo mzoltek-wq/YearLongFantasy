@@ -10,6 +10,7 @@
     "test": "node --test --import tsx tests/**/*.test.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
+    "players:import:espn": "tsx scripts/import-espn-players.ts",
     "db:seed": "node prisma/seed.js",
     "db:reset": "prisma db push --accept-data-loss && node prisma/seed.js"
   },
