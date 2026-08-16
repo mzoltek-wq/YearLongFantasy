@@ -1,10 +1,20 @@
 import { notFound } from "next/navigation";
+import { DraftSelectionType, KeeperStatus } from "@prisma/client";
 
+import { DraftHistoryGrid, type DraftHistorySlot } from "@/components/league/draft-history-grid";
 import { Card } from "@/components/ui/card";
 import { prisma } from "@/lib/db/prisma";
-import { SPORT_EMOJIS, SPORT_LABELS } from "@/lib/constants/league";
 
 export const dynamic = "force-dynamic";
+
+function normalizeKeeperStatus(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.toUpperCase();
+  return Object.values(KeeperStatus).includes(normalized as KeeperStatus) ? (normalized as KeeperStatus) : null;
+}
 
 export default async function LeagueGridPage({
   params,
@@ -21,43 +31,80 @@ export default async function LeagueGridPage({
     notFound();
   }
 
-  const season = await prisma.leagueSeason.findFirst({
-    where: { year },
-    include: {
-      league: true,
-      seasonManagers: {
-        include: { manager: true },
-        orderBy: { slotNumber: "asc" },
+  const [availableYears, season] = await Promise.all([
+    prisma.leagueSeason.findMany({
+      select: { year: true },
+      orderBy: { year: "desc" },
+    }),
+    prisma.leagueSeason.findFirst({
+      where: { year },
+      include: {
+        league: true,
+        seasonManagers: {
+          include: { manager: true },
+          orderBy: { slotNumber: "asc" },
+        },
+        drafts: {
+          orderBy: { createdAt: "asc" },
+          take: 1,
+        },
       },
-      drafts: {
-        orderBy: { createdAt: "asc" },
-        take: 1,
-      },
-    },
-  });
+    }),
+  ]);
 
   if (!season || season.drafts.length === 0) {
     notFound();
   }
 
   const draft = season.drafts[0];
-  const slots = await prisma.draftGridSlot.findMany({
-    where: { draftId: draft.id },
-    include: {
-      currentManager: true,
-      originalManager: true,
-    },
-    orderBy: [{ round: "asc" }, { slotNumber: "asc" }],
-  });
+  const [gridSlots, liveSlots] = await Promise.all([
+    prisma.draftGridSlot.findMany({
+      where: { draftId: draft.id },
+      include: {
+        currentManager: true,
+        originalManager: true,
+      },
+      orderBy: [{ round: "asc" }, { slotNumber: "asc" }],
+    }),
+    prisma.draftSlot.findMany({
+      include: {
+        currentOwner: true,
+        defaultOwner: true,
+        keeper: true,
+      },
+      orderBy: { overallPickNumber: "asc" },
+    }),
+  ]);
 
   const managerColumns = season.seasonManagers.map((entry) => entry.manager);
-  const slotsByRoundAndOriginalManager = new Map<string, (typeof slots)[number]>();
+  const liveSlotByOverallPick = new Map(liveSlots.map((slot) => [slot.overallPickNumber, slot]));
+  const slots: DraftHistorySlot[] = gridSlots.map((slot) => {
+    const liveSlot = liveSlotByOverallPick.get(slot.overallPickNumber);
+    const livePlayerName = liveSlot?.selectedPlayerName ?? null;
+    const playerName = slot.playerName ?? livePlayerName;
+    const liveSelectionType = livePlayerName ? (liveSlot?.isKeeper ? DraftSelectionType.KEEPER : DraftSelectionType.DRAFTED) : DraftSelectionType.OPEN;
+    const selectionType = slot.selectionType !== DraftSelectionType.OPEN ? slot.selectionType : liveSelectionType;
+    const sport = slot.sport ?? liveSlot?.selectedSport ?? null;
+    const keeperStatus = slot.keeperStatus ?? normalizeKeeperStatus(liveSlot?.keeper?.tag);
 
-  for (const slot of slots) {
-    slotsByRoundAndOriginalManager.set(`${slot.round}:${slot.originalManagerId}`, slot);
-  }
+    return {
+      id: slot.id,
+      round: slot.round,
+      slotNumber: slot.slotNumber,
+      overallPickNumber: slot.overallPickNumber,
+      originalManagerId: slot.originalManagerId,
+      currentManagerId: slot.currentManagerId,
+      currentManagerName: slot.currentManager.displayName ?? slot.currentManager.name,
+      currentManagerCode: slot.currentManager.code,
+      playerName,
+      sport,
+      selectionType,
+      keeperStatus,
+      source: slot.playerName ? "draft-grid" : livePlayerName ? "live-draft" : "draft-grid",
+    };
+  });
 
-  const selectedCount = slots.filter((slot) => slot.selectionType !== "OPEN").length;
+  const selectedCount = slots.filter((slot) => slot.selectionType !== DraftSelectionType.OPEN).length;
   const tradedPickCount = slots.filter((slot) => slot.currentManagerId !== slot.originalManagerId).length;
 
   return (
@@ -68,101 +115,21 @@ export default async function LeagueGridPage({
         </Card>
       ) : null}
 
-      <Card>
-        <p className="text-xs uppercase tracking-[0.4em] text-[var(--muted)]">League v2</p>
-        <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h2 className="text-3xl font-semibold">{season.name} draft grid</h2>
-            <p className="mt-2 max-w-3xl text-sm text-[var(--muted)]">
-              This is the new canonical grid model: each cell tracks original pick owner, current pick owner,
-              player, sport, and keeper status.
-            </p>
-          </div>
-          <div className="grid grid-cols-3 gap-2 text-center text-sm">
-            <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
-              <p className="text-xs uppercase tracking-[0.25em] text-[var(--muted)]">Rounds</p>
-              <p className="text-2xl font-semibold">{season.roundCount}</p>
-            </div>
-            <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
-              <p className="text-xs uppercase tracking-[0.25em] text-[var(--muted)]">Selected</p>
-              <p className="text-2xl font-semibold">{selectedCount}</p>
-            </div>
-            <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
-              <p className="text-xs uppercase tracking-[0.25em] text-[var(--muted)]">Moved</p>
-              <p className="text-2xl font-semibold">{tradedPickCount}</p>
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      <div className="overflow-hidden rounded-[2rem] border border-[var(--border)] bg-[var(--surface)] shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="min-w-full border-collapse text-sm">
-            <thead>
-              <tr className="bg-[var(--surface-strong)] text-left">
-                <th className="sticky left-0 z-20 border-b border-r border-[var(--border)] bg-[var(--surface-strong)] px-4 py-3 font-semibold">
-                  Round
-                </th>
-                {managerColumns.map((manager) => (
-                  <th className="min-w-56 border-b border-r border-[var(--border)] px-4 py-3 font-semibold" key={manager.id}>
-                    <div>{manager.displayName ?? manager.name}</div>
-                    <div className="text-xs font-medium text-[var(--muted)]">{manager.code}</div>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {Array.from({ length: season.roundCount }, (_, index) => index + 1).map((round) => (
-                <tr className="align-top" key={round}>
-                  <th className="sticky left-0 z-10 border-b border-r border-[var(--border)] bg-[var(--surface)] px-4 py-4 text-left font-semibold">
-                    {round}
-                  </th>
-                  {managerColumns.map((manager) => {
-                    const slot = slotsByRoundAndOriginalManager.get(`${round}:${manager.id}`);
-
-                    if (!slot) {
-                      return (
-                        <td className="border-b border-r border-[var(--border)] px-4 py-4 text-[var(--muted)]" key={manager.id}>
-                          Missing slot
-                        </td>
-                      );
-                    }
-
-                    const hasPickMoved = slot.currentManagerId !== slot.originalManagerId;
-                    const sportLabel = slot.sport ? `${SPORT_EMOJIS[slot.sport]} ${SPORT_LABELS[slot.sport]}` : null;
-
-                    return (
-                      <td className="border-b border-r border-[var(--border)] px-4 py-4" key={slot.id}>
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs font-semibold text-[var(--muted)]">Pick {slot.overallPickNumber}</span>
-                            {hasPickMoved ? (
-                              <span className="rounded-full bg-sky-100 px-2 py-1 text-xs font-semibold text-sky-800">
-                                {slot.currentManager.code}
-                              </span>
-                            ) : null}
-                          </div>
-
-                          {slot.playerName ? (
-                            <div>
-                              <p className="font-semibold">{slot.playerName}</p>
-                              <p className="text-xs text-[var(--muted)]">
-                                {[sportLabel, slot.keeperStatus].filter(Boolean).join(" · ")}
-                              </p>
-                            </div>
-                          ) : (
-                            <p className="text-[var(--muted)]">{hasPickMoved ? `${slot.currentManager.name} owns this pick` : "Open"}</p>
-                          )}
-                        </div>
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <DraftHistoryGrid
+        availableYears={availableYears.map((entry) => entry.year)}
+        managerColumns={managerColumns.map((manager) => ({
+          id: manager.id,
+          name: manager.name,
+          displayName: manager.displayName,
+          code: manager.code,
+        }))}
+        roundCount={season.roundCount}
+        seasonName={season.name}
+        selectedCount={selectedCount}
+        selectedYear={year}
+        slots={slots}
+        tradedPickCount={tradedPickCount}
+      />
     </div>
   );
 }
