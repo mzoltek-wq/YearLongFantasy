@@ -113,7 +113,15 @@ export function ReadOnlyLeagueView({ draftSnapshot, draftHistory }: ReadOnlyLeag
       </div>
 
       <main className="mx-auto max-w-7xl px-3 py-4 sm:px-6">
-        {displayedTab === "tracker" ? <DraftBoardClient initialSnapshot={liveDraftSnapshot} mode="tracker" trackerStickyClassName="top-[8.75rem] sm:top-[9.25rem]" /> : null}
+        {displayedTab === "tracker" ? (
+          <DraftBoardClient
+            autoRefresh={false}
+            initialSnapshot={draftSnapshot}
+            mode="tracker"
+            snapshotOverride={liveDraftSnapshot}
+            trackerStickyClassName="top-[8.75rem] sm:top-[9.25rem]"
+          />
+        ) : null}
         {displayedTab === "grid" ? <DraftHistoryGrid {...liveDraftHistory} variant="compact" /> : null}
         {displayedTab === "rosters" ? <RosterView snapshot={liveDraftSnapshot} /> : null}
         {displayedTab === "standings" ? (

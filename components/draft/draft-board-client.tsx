@@ -8,6 +8,8 @@ import type { LeagueSnapshot } from "@/lib/types/draft";
 
 type DraftBoardClientProps = {
   initialSnapshot: LeagueSnapshot;
+  snapshotOverride?: LeagueSnapshot;
+  autoRefresh?: boolean;
   mode?: "commissioner" | "tracker";
   trackerStickyClassName?: string;
 };
@@ -64,8 +66,8 @@ async function requestJson<T>(input: RequestInfo, init?: RequestInit) {
   return data;
 }
 
-export function DraftBoardClient({ initialSnapshot, mode = "commissioner", trackerStickyClassName = "top-2" }: DraftBoardClientProps) {
-  const [snapshot, setSnapshot] = useState(initialSnapshot);
+export function DraftBoardClient({ initialSnapshot, snapshotOverride, autoRefresh = true, mode = "commissioner", trackerStickyClassName = "top-2" }: DraftBoardClientProps) {
+  const [localSnapshot, setLocalSnapshot] = useState(initialSnapshot);
   const [playerName, setPlayerName] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [playerResolution, setPlayerResolution] = useState<PlayerResolution | null>(null);
@@ -76,9 +78,10 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
 
   async function refresh() {
     const data = await requestJson<LeagueSnapshot>("/api/draft");
-    setSnapshot(data);
+    setLocalSnapshot(data);
   }
 
+  const snapshot = snapshotOverride ?? localSnapshot;
   const currentPick = snapshot.draftWindow.currentPick;
   const nextPick = snapshot.draftWindow.nextPick;
   const editingPick = editingPickNumber ? snapshot.slots.find((slot) => slot.overallPickNumber === editingPickNumber) ?? null : null;
@@ -94,12 +97,16 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
   const upcomingPickLimit = isTrackerMode ? 10 : 5;
 
   useEffect(() => {
+    if (!autoRefresh) {
+      return;
+    }
+
     const interval = setInterval(() => {
       refresh().catch(() => null);
     }, 5000);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [autoRefresh]);
 
   useEffect(() => {
     const trimmedPlayerName = playerName.trim();
