@@ -10,12 +10,13 @@ const links = [
   { href: "/trades", label: "Trades" },
   { href: "/admin", label: "Admin" },
   { href: "/tracker", label: "Tracker" },
+  { href: "/league-view", label: "League View" },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
 
-  if (pathname.startsWith("/tracker")) {
+  if (pathname.startsWith("/tracker") || pathname.startsWith("/league-view")) {
     return <>{children}</>;
   }
 

@@ -29,7 +29,7 @@ export type DraftHistorySlot = {
   source: "draft-grid" | "live-draft";
 };
 
-type DraftHistoryGridProps = {
+export type DraftHistoryGridProps = {
   availableYears: number[];
   selectedYear: number;
   seasonName: string;
@@ -38,6 +38,7 @@ type DraftHistoryGridProps = {
   tradedPickCount: number;
   managerColumns: DraftHistoryManager[];
   slots: DraftHistorySlot[];
+  variant?: "full" | "compact";
 };
 
 function slotTypeLabel(slot: DraftHistorySlot) {
@@ -65,6 +66,7 @@ export function DraftHistoryGrid({
   tradedPickCount,
   managerColumns,
   slots,
+  variant = "full",
 }: DraftHistoryGridProps) {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
@@ -111,9 +113,11 @@ export function DraftHistoryGrid({
           <div>
             <p className="text-xs uppercase tracking-[0.4em] text-[var(--muted)]">Draft history</p>
             <h2 className="mt-2 text-3xl font-semibold">{seasonName} draft grid</h2>
-            <p className="mt-2 max-w-3xl text-sm text-[var(--muted)]">
-              Searchable grid for traded picks, keepers, and draft picks. The 2026 view also reflects live draft selections as they are entered.
-            </p>
+            {variant === "full" ? (
+              <p className="mt-2 max-w-3xl text-sm text-[var(--muted)]">
+                Searchable grid for traded picks, keepers, and draft picks. The 2026 view also reflects live draft selections as they are entered.
+              </p>
+            ) : null}
           </div>
           <div className="grid grid-cols-3 gap-2 text-center text-sm">
             <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-strong)] px-3 py-2">
@@ -252,6 +256,7 @@ export function DraftHistoryGrid({
         </div>
       </div>
 
+      {variant === "full" ? (
       <div className="overflow-hidden rounded-[2rem] border border-[var(--border)] bg-[var(--surface)] shadow-sm">
         <div className="border-b border-[var(--border)] px-4 py-3">
           <p className="text-xs uppercase tracking-[0.3em] text-[var(--muted)]">Full draft grid</p>
@@ -313,6 +318,7 @@ export function DraftHistoryGrid({
           </table>
         </div>
       </div>
+      ) : null}
     </div>
   );
 }
