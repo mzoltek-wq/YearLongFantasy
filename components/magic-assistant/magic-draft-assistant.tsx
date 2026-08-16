@@ -40,6 +40,13 @@ type AssistantState = {
   generatedAt: string;
 };
 
+type MagicDraftAssistantProps = {
+  storageKeyPrefix?: string;
+  eyebrow?: string;
+  title?: string;
+  description?: string;
+};
+
 const sports: Array<[Sport, string]> = [
   ["HOCKEY", "Hockey"],
   ["BASEBALL", "Baseball"],
@@ -138,7 +145,12 @@ function formatTaken(taken: TakenPlayer | null) {
   return `${verb}${manager}${pick}${round}`;
 }
 
-export function MagicDraftAssistant() {
+export function MagicDraftAssistant({
+  storageKeyPrefix = "magic-assistant",
+  eyebrow = "Zoltek's magic draft assistant",
+  title = "Best available, minus reality",
+  description = "Hidden private board backed by the league app. Taken players poll from the live draft database every five seconds.",
+}: MagicDraftAssistantProps) {
   const [state, setState] = useState<AssistantState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sport, setSport] = useState<Sport>("HOCKEY");
@@ -147,9 +159,9 @@ export function MagicDraftAssistant() {
   const [query, setQuery] = useState("");
   const [hideTaken, setHideTaken] = useState(true);
   const [showWatchOnly, setShowWatchOnly] = useState(false);
-  const [watchlist, setWatchlist] = useLocalStringArray("magic-assistant-watchlist");
-  const [doNotDraft, setDoNotDraft] = useLocalStringArray("magic-assistant-dnd");
-  const [manualCrossedOff, setManualCrossedOff] = useLocalStringArray("magic-assistant-crossed-off");
+  const [watchlist, setWatchlist] = useLocalStringArray(`${storageKeyPrefix}-watchlist`);
+  const [doNotDraft, setDoNotDraft] = useLocalStringArray(`${storageKeyPrefix}-dnd`);
+  const [manualCrossedOff, setManualCrossedOff] = useLocalStringArray(`${storageKeyPrefix}-crossed-off`);
 
   async function loadState({ quiet = false } = {}) {
     try {
@@ -218,11 +230,9 @@ export function MagicDraftAssistant() {
         <header className="rounded-[2rem] border border-white/10 bg-white/[0.06] p-5 shadow-2xl shadow-black/20 backdrop-blur">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="text-xs uppercase tracking-[0.45em] text-emerald-200/80">Zoltek&apos;s magic draft assistant</p>
-              <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-5xl">Best available, minus reality</h1>
-              <p className="mt-2 max-w-3xl text-sm text-slate-300">
-                Hidden private board backed by the league app. Taken players poll from the live draft database every five seconds.
-              </p>
+              <p className="text-xs uppercase tracking-[0.45em] text-emerald-200/80">{eyebrow}</p>
+              <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-5xl">{title}</h1>
+              <p className="mt-2 max-w-3xl text-sm text-slate-300">{description}</p>
             </div>
             <div className="grid grid-cols-3 gap-2 text-center text-sm">
               <div className="rounded-2xl bg-emerald-400/15 px-4 py-3">
