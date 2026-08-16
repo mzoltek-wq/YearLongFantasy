@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { IntegrationType, Owner, Sport } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
+import { DEFAULT_TOTAL_ROUNDS } from "@/lib/constants/league";
 import { ParsedKeeperTextEntry, parseKeeperText } from "@/lib/keepers/import";
 import { buildSnakeDraftOrder, normalizePlayerName, parseSportFromValue } from "@/lib/utils/draft";
 
@@ -447,10 +448,11 @@ export async function importFullKeeperGridText(formData: FormData) {
       throw new Error("Paste the full keeper grid before importing.");
     }
 
-    const [owners, ownerCodes, draftSlots] = await Promise.all([
+    const [owners, ownerCodes, draftSlots, rosterLimits] = await Promise.all([
       prisma.owner.findMany(),
       prisma.ownerCode.findMany({ include: { owner: true } }),
       prisma.draftSlot.findMany(),
+      prisma.rosterLimit.findMany(),
     ]);
     const ownerByName = new Map(owners.map((owner) => [owner.name.toLowerCase(), owner]));
     const ownerByCode = new Map(ownerCodes.map((code) => [code.code.toUpperCase(), code.owner]));
@@ -464,7 +466,49 @@ export async function importFullKeeperGridText(formData: FormData) {
     const ownerColumns = rows[headerIndex]
       .map((cell, index) => ({ owner: ownerByName.get(cell.toLowerCase()), index }))
       .filter((entry): entry is { owner: Owner; index: number } => Boolean(entry.owner));
-    const slotByRoundAndDefaultOwner = new Map(draftSlots.map((slot) => [`${slot.round}:${slot.defaultOwnerId}`, slot]));
+    const rosterTotalRounds = rosterLimits.reduce((total, limit) => total + limit.perOwnerLimit, 0);
+    const targetTotalRounds = Math.max(DEFAULT_TOTAL_ROUNDS, rosterTotalRounds);
+    let activeDraftSlots = draftSlots;
+    const currentMaxDraftRound = Math.max(0, ...draftSlots.map((slot) => slot.round));
+
+    if (currentMaxDraftRound < targetTotalRounds) {
+      const roundOneSlots = draftSlots.filter((slot) => slot.round === 1).sort((left, right) => left.slotNumber - right.slotNumber);
+
+      if (roundOneSlots.length !== owners.length) {
+        throw new Error("The draft board needs to be rebuilt, but round 1 does not include all owners. Save draft order first.");
+      }
+
+      const rebuiltSlots = buildSnakeDraftOrder(
+        roundOneSlots.map((slot) => slot.defaultOwnerId),
+        targetTotalRounds,
+      );
+
+      await prisma.$transaction([
+        prisma.keeper.deleteMany(),
+        prisma.draftSlot.deleteMany(),
+        prisma.draftSlot.createMany({
+          data: rebuiltSlots.map((slot) => ({
+            round: slot.round,
+            slotNumber: slot.slotNumber,
+            overallPickNumber: slot.overallPickNumber,
+            defaultOwnerId: slot.ownerId,
+            currentOwnerId: slot.ownerId,
+          })),
+        }),
+        prisma.leagueSettings.updateMany({
+          data: {
+            expectedTotalPlayersPerOwner: targetTotalRounds,
+            totalRounds: targetTotalRounds,
+            currentDraftRound: 1,
+            currentDraftPick: 1,
+          },
+        }),
+      ]);
+
+      activeDraftSlots = await prisma.draftSlot.findMany();
+    }
+
+    const slotByRoundAndDefaultOwner = new Map(activeDraftSlots.map((slot) => [`${slot.round}:${slot.defaultOwnerId}`, slot]));
     const source = await getManualKeeperImportSource();
     const issues: Array<{ owner: Owner; entry: ParsedKeeperTextEntry; reason: string }> = [];
     const seenPlayerNames = new Set<string>();
@@ -489,9 +533,9 @@ export async function importFullKeeperGridText(formData: FormData) {
       },
     });
 
-    for (let index = 0; index < draftSlots.length; index += 25) {
+    for (let index = 0; index < activeDraftSlots.length; index += 25) {
       await prisma.$transaction(
-        draftSlots.slice(index, index + 25).map((slot) =>
+        activeDraftSlots.slice(index, index + 25).map((slot) =>
           prisma.draftSlot.update({
             where: { id: slot.id },
             data: {
@@ -539,6 +583,23 @@ export async function importFullKeeperGridText(formData: FormData) {
       for (const ownerColumn of ownerColumns) {
         const rawValue = row[ownerColumn.index] ?? "";
         if (!rawValue) {
+          continue;
+        }
+
+        if (round > targetTotalRounds) {
+          issues.push({
+            owner: ownerColumn.owner,
+            entry: {
+              round,
+              rawValue,
+              playerName: null,
+              sport: null,
+              keeperTag: null,
+              invalidKeeperTags: [],
+              pickOwnerCode: null,
+            },
+            reason: `Round ${round} is outside the configured ${targetTotalRounds}-round draft.`,
+          });
           continue;
         }
 
@@ -652,13 +713,35 @@ export async function importFullKeeperGridText(formData: FormData) {
       }
     }
 
+    const finalDraftSlots = await prisma.draftSlot.findMany({
+      select: {
+        currentOwnerId: true,
+        selectedPlayerName: true,
+      },
+    });
+
     for (const owner of owners) {
       const importedCount = importedCountByOwnerId.get(owner.id) ?? 0;
       const k4Count = k4CountByOwnerId.get(owner.id) ?? 0;
       const expectedKeeperCount = k4Count > 0 ? 26 : 25;
-      const issueCount = issues.filter((issue) => issue.owner.id === owner.id).length;
+      const openPickCount = finalDraftSlots.filter((slot) => slot.currentOwnerId === owner.id && !slot.selectedPlayerName).length;
+      const totalSpotsAccountedFor = importedCount + openPickCount;
 
-      if (importedCount !== expectedKeeperCount) {
+      if (importedCount !== 25 && importedCount !== 26) {
+        issues.push({
+          owner,
+          entry: {
+            round: 0,
+            rawValue: `${importedCount} imported keepers`,
+            playerName: null,
+            sport: null,
+            keeperTag: null,
+            invalidKeeperTags: [],
+            pickOwnerCode: null,
+          },
+          reason: `Expected 25 or 26 keepers for ${owner.name}, but found ${importedCount}.`,
+        });
+      } else if (importedCount !== expectedKeeperCount) {
         issues.push({
           owner,
           entry: {
@@ -671,6 +754,22 @@ export async function importFullKeeperGridText(formData: FormData) {
             pickOwnerCode: null,
           },
           reason: `Expected ${expectedKeeperCount} keepers for ${owner.name}${k4Count > 0 ? " because a K4 was imported" : ""}, but found ${importedCount}.`,
+        });
+      }
+
+      if (totalSpotsAccountedFor !== targetTotalRounds) {
+        issues.push({
+          owner,
+          entry: {
+            round: 0,
+            rawValue: `${importedCount} keepers + ${openPickCount} picks`,
+            playerName: null,
+            sport: null,
+            keeperTag: null,
+            invalidKeeperTags: [],
+            pickOwnerCode: null,
+          },
+          reason: `${owner.name} has ${importedCount} keepers and ${openPickCount} open picks, totaling ${totalSpotsAccountedFor}. Expected ${targetTotalRounds}.`,
         });
       }
 
@@ -700,7 +799,7 @@ export async function importFullKeeperGridText(formData: FormData) {
             ownerId: owner.id,
             ownerName: owner.name,
             importedCount,
-            issueCount,
+            issueCount: issues.filter((issue) => issue.owner.id === owner.id).length,
             submittedAt: new Date().toISOString(),
           },
           importKey: `keeper-${owner.id}:submission:${Date.now()}`,
@@ -748,6 +847,7 @@ export async function importFullKeeperGridText(formData: FormData) {
           issueCount: issues.length,
           rowCount: Math.max(rows.length - headerIndex - 1, 0),
           ownerColumnCount: ownerColumns.length,
+          targetTotalRounds,
           skippedMissingKeeperTagCount,
           topIssueReasons,
           placementSamples,
@@ -755,6 +855,7 @@ export async function importFullKeeperGridText(formData: FormData) {
             ownerId: owner.id,
             ownerName: owner.name,
             importedCount: importedCountByOwnerId.get(owner.id) ?? 0,
+            openPickCount: finalDraftSlots.filter((slot) => slot.currentOwnerId === owner.id && !slot.selectedPlayerName).length,
             k4Count: k4CountByOwnerId.get(owner.id) ?? 0,
           })),
           importedAt: new Date().toISOString(),

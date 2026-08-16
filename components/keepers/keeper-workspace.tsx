@@ -62,6 +62,7 @@ type KeeperFullGridImportLogPayload = {
   issueCount?: number;
   rowCount?: number;
   ownerColumnCount?: number;
+  targetTotalRounds?: number;
   skippedMissingKeeperTagCount?: number;
   importedAt?: string;
   topIssueReasons?: Array<{
@@ -80,6 +81,7 @@ type KeeperFullGridImportLogPayload = {
     ownerId?: string;
     ownerName?: string;
     importedCount?: number;
+    openPickCount?: number;
     k4Count?: number;
   }>;
 };
@@ -224,6 +226,7 @@ export async function KeeperWorkspace({
                   <h3 className="font-semibold">Latest full-grid import log</h3>
                   <p className="mt-1 text-sm text-[var(--muted)]">
                     Imported {latestFullGridImportLogPayload.importedTotal ?? 0} keepers across {latestFullGridImportLogPayload.ownerColumnCount ?? 0} owner columns.
+                    {latestFullGridImportLogPayload.targetTotalRounds ? ` Target roster size is ${latestFullGridImportLogPayload.targetTotalRounds}.` : ""}
                     {latestFullGridImportLogPayload.skippedMissingKeeperTagCount
                       ? ` Skipped ${latestFullGridImportLogPayload.skippedMissingKeeperTagCount} player-looking cells without keeper tags.`
                       : ""}
@@ -250,7 +253,7 @@ export async function KeeperWorkspace({
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   {latestFullGridImportLogPayload.importedCountByOwner.map((entry) => (
                     <div className="rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-xs" key={entry.ownerId ?? entry.ownerName}>
-                      <span className="font-semibold">{entry.ownerName}</span>: {entry.importedCount ?? 0} imported, {entry.k4Count ?? 0} K4
+                      <span className="font-semibold">{entry.ownerName}</span>: {entry.importedCount ?? 0} keepers, {entry.openPickCount ?? 0} open picks, {entry.k4Count ?? 0} K4
                     </div>
                   ))}
                 </div>
