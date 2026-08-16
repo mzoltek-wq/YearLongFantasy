@@ -21,6 +21,9 @@ type PlayerResolution = {
     sport: Sport;
     positions: string[];
     team: string | null;
+    isTaken: boolean;
+    takenSelection: PlayerTakenSelection | null;
+    unavailableSelection: PlayerTakenSelection | null;
   }>;
   sport: Sport | null;
   sportSource: "player-db" | "typed-value" | "unknown";
@@ -29,14 +32,18 @@ type PlayerResolution = {
   team: string | null;
   warnings: string[];
   rosterWarnings: string[];
-  unavailableSelection: {
-    overallPickNumber: number;
-    round: number;
-    slotNumber: number;
-    ownerName: string;
-    isKeeper: boolean;
-    playerName: string;
-  } | null;
+  isTaken: boolean;
+  takenSelection: PlayerTakenSelection | null;
+  unavailableSelection: PlayerTakenSelection | null;
+};
+
+type PlayerTakenSelection = {
+  overallPickNumber: number;
+  round: number;
+  slotNumber: number;
+  ownerName: string;
+  isKeeper: boolean;
+  playerName: string;
 };
 
 async function requestJson<T>(input: RequestInfo, init?: RequestInit) {
@@ -76,8 +83,11 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
   const editingPick = editingPickNumber ? snapshot.slots.find((slot) => slot.overallPickNumber === editingPickNumber) ?? null : null;
   const activePick = editingPick ?? currentPick;
   const activePickNumber = activePick?.overallPickNumber ?? null;
-  const unavailableSelection = playerResolution?.unavailableSelection ?? null;
-  const isPlayerUnavailable = Boolean(unavailableSelection);
+  const takenSelection = playerResolution?.takenSelection ?? playerResolution?.unavailableSelection ?? null;
+  const isPlayerUnavailable = Boolean(playerResolution?.isTaken || takenSelection);
+  const hasPlayerText = playerName.trim().length > 0;
+  const needsPlayerValidation = playerName.trim().length >= 2;
+  const saveDisabled = !activePick || !hasPlayerText || isResolvingPlayer || isPlayerUnavailable || (needsPlayerValidation && !playerResolution);
   const isTrackerMode = mode === "tracker";
   const recentPickLimit = isTrackerMode ? 10 : 5;
   const upcomingPickLimit = isTrackerMode ? 10 : 5;
@@ -202,6 +212,28 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
       return;
     }
 
+    if (isResolvingPlayer) {
+      setError("Wait for player validation to finish before saving the pick.");
+      return;
+    }
+
+    if (needsPlayerValidation && !playerResolution) {
+      setError("Wait for player validation to finish before saving the pick.");
+      return;
+    }
+
+    if (takenSelection) {
+      setError(
+        `${takenSelection.playerName} is already ${takenSelection.isKeeper ? "kept" : "drafted"} by ${takenSelection.ownerName} at pick ${takenSelection.overallPickNumber}.`,
+      );
+      return;
+    }
+
+    if (playerResolution?.isTaken) {
+      setError("That player is already kept or drafted.");
+      return;
+    }
+
     try {
       await requestJson("/api/draft/picks", {
         method: editingPick ? "PUT" : "POST",
@@ -301,7 +333,7 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
                   const nextPlayerName = event.target.value;
                   setPlayerName(nextPlayerName);
                   setPlayerResolution(null);
-                  setIsResolvingPlayer(Boolean(currentPick && nextPlayerName.trim().length >= 2));
+                  setIsResolvingPlayer(Boolean(activePick && nextPlayerName.trim().length >= 2));
                 }}
                 placeholder="Enter player name"
                 value={playerName}
@@ -344,14 +376,27 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
                     <div className="space-y-2 rounded-xl bg-white px-3 py-2">
                       <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Possible matches</p>
                       <div className="grid gap-2">
-                        {playerResolution.matches.map((match) => (
+                        {playerResolution.matches.map((match) => {
+                          const matchTakenSelection = match.takenSelection ?? match.unavailableSelection;
+                          const isMatchTaken = Boolean(match.isTaken || matchTakenSelection);
+
+                          return (
                           <button
-                            className="rounded-xl border border-[var(--border)] px-3 py-2 text-left transition hover:border-[var(--accent)] hover:bg-[var(--surface-strong)]"
+                            className={`rounded-xl border px-3 py-2 text-left transition disabled:cursor-not-allowed ${
+                              isMatchTaken
+                                ? "border-rose-200 bg-rose-50 text-rose-950"
+                                : "border-[var(--border)] hover:border-[var(--accent)] hover:bg-[var(--surface-strong)]"
+                            }`}
+                            disabled={isMatchTaken}
                             key={match.id}
                             onClick={() => {
+                              if (isMatchTaken) {
+                                return;
+                              }
+
                               setPlayerName(match.displayName);
                               setPlayerResolution(null);
-                              setIsResolvingPlayer(Boolean(currentPick));
+                              setIsResolvingPlayer(Boolean(activePick));
                             }}
                             type="button"
                           >
@@ -360,8 +405,14 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
                               {SPORT_EMOJIS[match.sport]} {SPORT_LABELS[match.sport]}
                               {match.positions.length > 0 ? ` • ${match.positions.join(", ")}` : ""}
                             </span>
+                            {matchTakenSelection ? (
+                              <span className="mt-1 block text-xs font-semibold text-rose-800">
+                                Already {matchTakenSelection.isKeeper ? "kept" : "drafted"} by {matchTakenSelection.ownerName} at pick {matchTakenSelection.overallPickNumber}
+                              </span>
+                            ) : null}
                           </button>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   ) : null}
@@ -373,7 +424,7 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
 
             <button
               className="w-full rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={!activePick || isPlayerUnavailable}
+              disabled={saveDisabled}
               type="submit"
             >
               {editingPick ? `Update pick ${editingPick.overallPickNumber}` : "Save current pick"}

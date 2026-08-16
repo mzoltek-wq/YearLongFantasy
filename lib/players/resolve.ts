@@ -30,6 +30,8 @@ export type DraftPlayerResolution = {
   positionSource: "player-db" | "typed-value" | "default" | "unknown";
   team: string | null;
   warnings: string[];
+  isTaken: boolean;
+  takenSelection: DraftPlayerUnavailableSelection | null;
   unavailableSelection: DraftPlayerUnavailableSelection | null;
 };
 
@@ -39,6 +41,9 @@ export type DraftPlayerCandidate = {
   sport: Sport;
   positions: PositionCode[];
   team: string | null;
+  isTaken: boolean;
+  takenSelection: DraftPlayerUnavailableSelection | null;
+  unavailableSelection: DraftPlayerUnavailableSelection | null;
 };
 
 export type DraftPlayerUnavailableSelection = {
@@ -73,6 +78,7 @@ export async function findDraftPlayerCandidates(
   playerName: string,
   tx: Prisma.TransactionClient | typeof prisma = prisma,
   limit = 8,
+  overallPickNumberToIgnore?: number,
 ): Promise<DraftPlayerCandidate[]> {
   const cleanedName = cleanDraftPlayerName(playerName);
   const normalizedName = normalizePlayerName(cleanedName || playerName);
@@ -97,8 +103,14 @@ export async function findDraftPlayerCandidates(
     take: limit,
   });
 
-  return players.map((player) => {
+  return Promise.all(players.map(async (player) => {
     const metadata = (player.metadata ?? null) as PlayerMetadata | null;
+    const unavailableSelection = await findExistingDraftSelection({
+      playerId: player.id,
+      normalizedName: normalizePlayerName(player.displayName),
+      overallPickNumberToIgnore,
+      tx,
+    });
 
     return {
       id: player.id,
@@ -106,11 +118,18 @@ export async function findDraftPlayerCandidates(
       sport: player.sport,
       positions: extractPositionsFromMetadata(player.sport, metadata),
       team: typeof metadata?.team === "string" ? metadata.team : null,
+      isTaken: Boolean(unavailableSelection),
+      takenSelection: unavailableSelection,
+      unavailableSelection,
     };
-  });
+  }));
 }
 
-export async function resolveDraftPlayer(playerName: string, tx: Prisma.TransactionClient | typeof prisma = prisma): Promise<DraftPlayerResolution> {
+export async function resolveDraftPlayer(
+  playerName: string,
+  tx: Prisma.TransactionClient | typeof prisma = prisma,
+  options: { overallPickNumberToIgnore?: number } = {},
+): Promise<DraftPlayerResolution> {
   const cleanedName = cleanDraftPlayerName(playerName);
   const normalizedName = normalizePlayerName(cleanedName || playerName);
   const typedSport = parseSportFromValue(playerName);
@@ -122,7 +141,7 @@ export async function resolveDraftPlayer(playerName: string, tx: Prisma.Transact
   const metadataPositions = sport ? extractPositionsFromMetadata(sport, metadata) : [];
   const typedPositions = parseTypedPositions(playerName, sport);
   const positions = metadataPositions.length > 0 ? metadataPositions : typedPositions;
-  const matches = existingPlayer ? [] : await findDraftPlayerCandidates(playerName, tx);
+  const matches = existingPlayer ? [] : await findDraftPlayerCandidates(playerName, tx, 8, options.overallPickNumberToIgnore);
   const warnings: string[] = [];
 
   if (!sport) {
@@ -145,6 +164,8 @@ export async function resolveDraftPlayer(playerName: string, tx: Prisma.Transact
     positionSource: metadataPositions.length > 0 ? "player-db" : typedPositions.length > 0 ? "typed-value" : sport === Sport.GOLF ? "default" : "unknown",
     team: typeof metadata?.team === "string" ? metadata.team : null,
     warnings,
+    isTaken: false,
+    takenSelection: null,
     unavailableSelection: null,
   };
 }
@@ -204,7 +225,7 @@ export async function resolveDraftPlayerWithRosterWarnings({
   ownerId: string;
   overallPickNumberToIgnore?: number;
 }) {
-  const resolution = await resolveDraftPlayer(playerName);
+  const resolution = await resolveDraftPlayer(playerName, prisma, { overallPickNumberToIgnore });
   const unavailableSelection = await findExistingDraftSelection({
     playerId: resolution.matchedPlayerId,
     normalizedName: normalizePlayerName(resolution.matchedDisplayName ?? resolution.playerName),
@@ -220,6 +241,8 @@ export async function resolveDraftPlayerWithRosterWarnings({
     return {
       ...resolution,
       warnings: [...resolution.warnings, ...duplicateWarnings],
+      isTaken: Boolean(unavailableSelection),
+      takenSelection: unavailableSelection,
       unavailableSelection,
       rosterWarnings: [] as string[],
     };
@@ -257,6 +280,8 @@ export async function resolveDraftPlayerWithRosterWarnings({
   return {
     ...resolution,
     warnings: [...resolution.warnings, ...duplicateWarnings],
+    isTaken: Boolean(unavailableSelection),
+    takenSelection: unavailableSelection,
     unavailableSelection,
     rosterWarnings,
   };
