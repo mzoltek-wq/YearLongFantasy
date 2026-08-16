@@ -60,15 +60,16 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner" }: Dra
           const leftTime = left.selectedAt ? new Date(left.selectedAt).getTime() : 0;
           const rightTime = right.selectedAt ? new Date(right.selectedAt).getTime() : 0;
           return rightTime - leftTime;
-        })
-        .slice(0, 5),
+        }),
     [snapshot.slots],
   );
+  const lastFivePicks = completedPicks.slice(0, 5);
+  const recentPickGridSlots = completedPicks.slice(0, 25);
   const upcomingPicks = useMemo(
     () =>
       snapshot.slots
         .filter((slot) => !slot.selectedPlayerName)
-        .slice(0, 6),
+        .slice(0, 5),
     [snapshot.slots],
   );
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
@@ -85,6 +86,7 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner" }: Dra
       return slot.selectedPlayerName.toLowerCase().includes(normalizedSearchQuery);
     });
   }, [normalizedSearchQuery, snapshot.slots]);
+  const mobilePickGridSlots = normalizedSearchQuery ? searchResults : recentPickGridSlots;
 
   const ownerRosterDrilldown = useMemo(
     () =>
@@ -323,10 +325,10 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner" }: Dra
             <section className="rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-6">
               <p className="text-xs uppercase tracking-[0.4em] text-[var(--muted)]">Recent picks</p>
               <div className="mt-4 space-y-3">
-                {completedPicks.length === 0 ? (
+                {lastFivePicks.length === 0 ? (
                   <p className="text-sm text-[var(--muted)]">No picks have been made yet.</p>
                 ) : (
-                  completedPicks.map((slot) => (
+                  lastFivePicks.map((slot) => (
                     <div className="rounded-2xl border border-[var(--border)] px-4 py-3" key={slot.id}>
                       <div className="flex items-center justify-between gap-3">
                         <div>
@@ -410,7 +412,45 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner" }: Dra
                 ) : null}
               </div>
             </div>
-            <div className="overflow-x-auto">
+            <div className="border-b border-[var(--border)] bg-[var(--surface)] px-4 py-4 md:hidden">
+              <div className="space-y-3">
+                <div className="flex items-end justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.3em] text-[var(--muted)]">{normalizedSearchQuery ? "Search results" : "Recent pick grid"}</p>
+                    <p className="mt-1 text-sm text-[var(--muted)]">
+                      {normalizedSearchQuery ? `Showing matches for "${searchQuery.trim()}".` : "Showing the last 25 live picks."}
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-[var(--surface-strong)] px-3 py-1 text-xs font-semibold text-[var(--muted)]">{mobilePickGridSlots.length}</span>
+                </div>
+
+                {mobilePickGridSlots.length === 0 ? (
+                  <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-strong)] px-4 py-3 text-sm text-[var(--muted)]">
+                    {normalizedSearchQuery ? "No players matched that search." : "No live picks have been entered yet."}
+                  </div>
+                ) : (
+                  <div className="grid gap-3">
+                    {mobilePickGridSlots.map((slot) => (
+                      <div className="rounded-2xl border border-[var(--border)] bg-white px-4 py-3" key={`mobile-grid-${slot.id}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-base font-semibold">{slot.selectedPlayerName}</p>
+                            <p className="mt-1 text-xs text-[var(--muted)]">
+                              {slot.currentOwner.name} • Pick {slot.overallPickNumber} • R{slot.round}.{slot.slotNumber}
+                            </p>
+                          </div>
+                          <div className="shrink-0 text-right text-xs font-semibold text-[var(--muted)]">
+                            <p>{slot.selectedSport ? `${SPORT_EMOJIS[slot.selectedSport]} ${SPORT_LABELS[slot.selectedSport]}` : "—"}</p>
+                            <p className="mt-1">{slot.isKeeper ? "Keeper" : "Live"}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="hidden overflow-x-auto md:block">
               <table className="min-w-full border-collapse text-sm">
                 <thead className="bg-[var(--surface-strong)]">
                   <tr>
