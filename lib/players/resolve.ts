@@ -23,12 +23,21 @@ export type DraftPlayerResolution = {
   normalizedName: string;
   matchedPlayerId: string | null;
   matchedDisplayName: string | null;
+  matches: DraftPlayerCandidate[];
   sport: Sport | null;
   sportSource: "player-db" | "typed-value" | "unknown";
   positions: PositionCode[];
   positionSource: "player-db" | "typed-value" | "default" | "unknown";
   team: string | null;
   warnings: string[];
+};
+
+export type DraftPlayerCandidate = {
+  id: string;
+  displayName: string;
+  sport: Sport;
+  positions: PositionCode[];
+  team: string | null;
 };
 
 export function cleanDraftPlayerName(rawValue: string) {
@@ -50,6 +59,47 @@ export function parseTypedPositions(rawValue: string, sport: Sport | null) {
   );
 }
 
+export async function findDraftPlayerCandidates(
+  playerName: string,
+  tx: Prisma.TransactionClient | typeof prisma = prisma,
+  limit = 8,
+): Promise<DraftPlayerCandidate[]> {
+  const cleanedName = cleanDraftPlayerName(playerName);
+  const normalizedName = normalizePlayerName(cleanedName || playerName);
+
+  if (normalizedName.length < 2) {
+    return [];
+  }
+
+  const players = await tx.player.findMany({
+    where: {
+      normalizedName: {
+        contains: normalizedName,
+      },
+    },
+    select: {
+      id: true,
+      displayName: true,
+      sport: true,
+      metadata: true,
+    },
+    orderBy: [{ displayName: "asc" }],
+    take: limit,
+  });
+
+  return players.map((player) => {
+    const metadata = (player.metadata ?? null) as PlayerMetadata | null;
+
+    return {
+      id: player.id,
+      displayName: player.displayName,
+      sport: player.sport,
+      positions: extractPositionsFromMetadata(player.sport, metadata),
+      team: typeof metadata?.team === "string" ? metadata.team : null,
+    };
+  });
+}
+
 export async function resolveDraftPlayer(playerName: string, tx: Prisma.TransactionClient | typeof prisma = prisma): Promise<DraftPlayerResolution> {
   const cleanedName = cleanDraftPlayerName(playerName);
   const normalizedName = normalizePlayerName(cleanedName || playerName);
@@ -62,6 +112,7 @@ export async function resolveDraftPlayer(playerName: string, tx: Prisma.Transact
   const metadataPositions = sport ? extractPositionsFromMetadata(sport, metadata) : [];
   const typedPositions = parseTypedPositions(playerName, sport);
   const positions = metadataPositions.length > 0 ? metadataPositions : typedPositions;
+  const matches = existingPlayer ? [] : await findDraftPlayerCandidates(playerName, tx);
   const warnings: string[] = [];
 
   if (!sport) {
@@ -77,6 +128,7 @@ export async function resolveDraftPlayer(playerName: string, tx: Prisma.Transact
     normalizedName,
     matchedPlayerId: existingPlayer?.id ?? null,
     matchedDisplayName: existingPlayer?.displayName ?? null,
+    matches,
     sport,
     sportSource: existingPlayer?.sport ? "player-db" : typedSport ? "typed-value" : "unknown",
     positions,

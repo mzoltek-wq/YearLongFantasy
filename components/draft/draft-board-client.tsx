@@ -15,6 +15,13 @@ type DraftBoardClientProps = {
 type PlayerResolution = {
   playerName: string;
   matchedDisplayName: string | null;
+  matches: Array<{
+    id: string;
+    displayName: string;
+    sport: Sport;
+    positions: string[];
+    team: string | null;
+  }>;
   sport: Sport | null;
   sportSource: "player-db" | "typed-value" | "unknown";
   positions: string[];
@@ -290,6 +297,31 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
                   ) : (
                     <p className="rounded-xl bg-emerald-50 px-3 py-2 text-xs text-emerald-800">Looks eligible based on cached player data.</p>
                   )}
+                  {playerResolution.matches.length > 0 ? (
+                    <div className="space-y-2 rounded-xl bg-white px-3 py-2">
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Possible matches</p>
+                      <div className="grid gap-2">
+                        {playerResolution.matches.map((match) => (
+                          <button
+                            className="rounded-xl border border-[var(--border)] px-3 py-2 text-left transition hover:border-[var(--accent)] hover:bg-[var(--surface-strong)]"
+                            key={match.id}
+                            onClick={() => {
+                              setPlayerName(match.displayName);
+                              setPlayerResolution(null);
+                              setIsResolvingPlayer(Boolean(currentPick));
+                            }}
+                            type="button"
+                          >
+                            <span className="block font-semibold">{match.displayName}</span>
+                            <span className="block text-xs text-[var(--muted)]">
+                              {SPORT_EMOJIS[match.sport]} {SPORT_LABELS[match.sport]}
+                              {match.positions.length > 0 ? ` • ${match.positions.join(", ")}` : ""}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : (
                 <p className="text-[var(--muted)]">Type a player name to auto-detect sport and roster eligibility.</p>
