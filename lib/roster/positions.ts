@@ -77,6 +77,16 @@ export const ROSTER_POSITION_SLOTS: Record<Sport, RosterSlotCode[]> = {
   [Sport.HOCKEY]: ["F", "F", "F", "F", "F", "F", "D", "D", "D", "UTIL", "UTIL", "UTIL", "G", "G", "BENCH", "BENCH", "BENCH"],
 };
 
+export function getRosterPositionSlots(sport: Sport, rosterLimit?: number | null) {
+  const slots = ROSTER_POSITION_SLOTS[sport] ?? [];
+
+  if (!rosterLimit || rosterLimit <= slots.length) {
+    return slots;
+  }
+
+  return [...slots, ...Array.from({ length: rosterLimit - slots.length }, () => "BENCH" as RosterSlotCode)];
+}
+
 const POSITION_ALIASES: Record<string, PositionCode> = {
   B: "1B",
   "1B": "1B",
@@ -223,8 +233,8 @@ export function canFillRosterSlot(slot: RosterSlotCode, player: RosterPlayer) {
   return positions.has(slot as PositionCode);
 }
 
-export function evaluateRosterFit(sport: Sport, players: RosterPlayer[]): RosterFitResult {
-  const slots = ROSTER_POSITION_SLOTS[sport] ?? [];
+export function evaluateRosterFit(sport: Sport, players: RosterPlayer[], rosterLimit?: number | null): RosterFitResult {
+  const slots = getRosterPositionSlots(sport, rosterLimit);
   const sortedSlotIndexes = slots
     .map((slot, index) => ({ slot, index }))
     .sort((left, right) => slotFlexibilityScore(left.slot) - slotFlexibilityScore(right.slot));
