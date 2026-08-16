@@ -20,7 +20,10 @@ const tabs: Array<{ id: LeagueViewTab; label: string }> = [
 ];
 
 export function ReadOnlyLeagueView({ draftSnapshot, draftHistory }: ReadOnlyLeagueViewProps) {
-  const [activeTab, setActiveTab] = useState<LeagueViewTab>("tracker");
+  const draftIsComplete = draftSnapshot.draftWindow.completed;
+  const [activeTab, setActiveTab] = useState<LeagueViewTab>(draftIsComplete ? "grid" : "tracker");
+  const visibleTabs = draftIsComplete ? tabs.filter((tab) => tab.id !== "tracker") : tabs;
+  const displayedTab = draftIsComplete && activeTab === "tracker" ? "grid" : activeTab;
 
   return (
     <div className="min-h-screen bg-[var(--bg)]">
@@ -30,11 +33,11 @@ export function ReadOnlyLeagueView({ draftSnapshot, draftHistory }: ReadOnlyLeag
             <p className="text-[10px] font-semibold uppercase tracking-[0.32em] text-[var(--muted)]">Year Long Fantasy</p>
             <h1 className="text-xl font-semibold">League View</h1>
           </div>
-          <div className="grid grid-cols-3 gap-2">
-            {tabs.map((tab) => (
+          <div className={`grid gap-2 ${visibleTabs.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
+            {visibleTabs.map((tab) => (
               <button
                 className={`rounded-full border px-3 py-2 text-xs font-semibold transition ${
-                  activeTab === tab.id
+                  displayedTab === tab.id
                     ? "border-[var(--accent)] bg-[var(--accent)] text-white"
                     : "border-[var(--border)] bg-[var(--surface)] text-[var(--ink)]"
                 }`}
@@ -50,9 +53,9 @@ export function ReadOnlyLeagueView({ draftSnapshot, draftHistory }: ReadOnlyLeag
       </div>
 
       <main className="mx-auto max-w-7xl px-3 py-4 sm:px-6">
-        {activeTab === "tracker" ? <DraftBoardClient initialSnapshot={draftSnapshot} mode="tracker" /> : null}
-        {activeTab === "grid" ? <DraftHistoryGrid {...draftHistory} variant="compact" /> : null}
-        {activeTab === "standings" ? (
+        {displayedTab === "tracker" ? <DraftBoardClient initialSnapshot={draftSnapshot} mode="tracker" trackerStickyClassName="top-[7.25rem] sm:top-[7.75rem]" /> : null}
+        {displayedTab === "grid" ? <DraftHistoryGrid {...draftHistory} variant="compact" /> : null}
+        {displayedTab === "standings" ? (
           <div className="rounded-[2rem] border border-[var(--border)] bg-[var(--surface)] p-5 shadow-sm">
             <p className="text-xs uppercase tracking-[0.3em] text-[var(--muted)]">Standings</p>
             <h2 className="mt-2 text-2xl font-semibold">Coming soon</h2>

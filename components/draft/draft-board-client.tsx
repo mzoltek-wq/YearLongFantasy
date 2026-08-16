@@ -9,6 +9,7 @@ import type { LeagueSnapshot } from "@/lib/types/draft";
 type DraftBoardClientProps = {
   initialSnapshot: LeagueSnapshot;
   mode?: "commissioner" | "tracker";
+  trackerStickyClassName?: string;
 };
 
 async function requestJson<T>(input: RequestInfo, init?: RequestInit) {
@@ -28,7 +29,7 @@ async function requestJson<T>(input: RequestInfo, init?: RequestInit) {
   return data;
 }
 
-export function DraftBoardClient({ initialSnapshot, mode = "commissioner" }: DraftBoardClientProps) {
+export function DraftBoardClient({ initialSnapshot, mode = "commissioner", trackerStickyClassName = "top-2" }: DraftBoardClientProps) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [playerName, setPlayerName] = useState("");
   const [sport, setSport] = useState<Sport>(Sport.HOCKEY);
@@ -304,7 +305,9 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner" }: Dra
 
         <div className="space-y-6">
           {isTrackerMode ? (
-            <div className="sticky top-2 z-20 rounded-[22px] border border-[var(--border)] bg-[var(--surface)]/95 px-4 py-3 shadow-lg shadow-slate-900/5 backdrop-blur">
+            <div
+              className={`sticky ${trackerStickyClassName} z-20 rounded-[22px] border border-[var(--border)] bg-[var(--surface)]/95 px-4 py-3 shadow-lg shadow-slate-900/5 backdrop-blur`}
+            >
               {currentPick ? (
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[var(--muted)]">
                   <span className="text-base font-semibold text-[var(--ink)]">
