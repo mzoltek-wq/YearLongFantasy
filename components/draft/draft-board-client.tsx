@@ -48,6 +48,7 @@ type PlayerTakenSelection = {
 
 async function requestJson<T>(input: RequestInfo, init?: RequestInit) {
   const response = await fetch(input, {
+    cache: "no-store",
     ...init,
     headers: {
       "Content-Type": "application/json",

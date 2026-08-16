@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { DraftBoardClient } from "@/components/draft/draft-board-client";
 import { DraftHistoryGrid, type DraftHistoryGridProps } from "@/components/league/draft-history-grid";
@@ -10,6 +10,12 @@ import type { LeagueSnapshot } from "@/lib/types/draft";
 type ReadOnlyLeagueViewProps = {
   draftSnapshot: LeagueSnapshot;
   draftHistory: DraftHistoryGridProps;
+};
+
+type LeagueViewPayload = {
+  draftSnapshot: LeagueSnapshot;
+  draftHistory: DraftHistoryGridProps | null;
+  generatedAt: string;
 };
 
 type LeagueViewTab = "tracker" | "grid" | "rosters" | "standings";
@@ -22,10 +28,52 @@ const tabs: Array<{ id: LeagueViewTab; label: string }> = [
 ];
 
 export function ReadOnlyLeagueView({ draftSnapshot, draftHistory }: ReadOnlyLeagueViewProps) {
-  const draftIsComplete = draftSnapshot.draftWindow.completed;
+  const [liveDraftSnapshot, setLiveDraftSnapshot] = useState(draftSnapshot);
+  const [liveDraftHistory, setLiveDraftHistory] = useState(draftHistory);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const latestRequestId = useRef(0);
+  const draftIsComplete = liveDraftSnapshot.draftWindow.completed;
   const [activeTab, setActiveTab] = useState<LeagueViewTab>(draftIsComplete ? "grid" : "tracker");
   const visibleTabs = draftIsComplete ? tabs.filter((tab) => tab.id !== "tracker") : tabs;
   const displayedTab = draftIsComplete && activeTab === "tracker" ? "grid" : activeTab;
+
+  async function refreshLeagueView() {
+    const requestId = latestRequestId.current + 1;
+    latestRequestId.current = requestId;
+
+    try {
+      const response = await fetch("/api/league-view", { cache: "no-store" });
+      const payload = (await response.json()) as LeagueViewPayload & { error?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Could not refresh league view.");
+      }
+
+      if (requestId !== latestRequestId.current) {
+        return;
+      }
+
+      setLiveDraftSnapshot(payload.draftSnapshot);
+      if (payload.draftHistory) {
+        setLiveDraftHistory(payload.draftHistory);
+      }
+      setLastUpdatedAt(payload.generatedAt);
+      setRefreshError(null);
+    } catch (error) {
+      if (requestId === latestRequestId.current) {
+        setRefreshError(error instanceof Error ? error.message : "Could not refresh league view.");
+      }
+    }
+  }
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      refreshLeagueView();
+    }, 3000);
+
+    return () => window.clearInterval(timer);
+  }, []);
 
   return (
     <div className="min-h-screen bg-[var(--bg)]">
@@ -51,13 +99,23 @@ export function ReadOnlyLeagueView({ draftSnapshot, draftHistory }: ReadOnlyLeag
               </button>
             ))}
           </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--muted)]">
+            <p>
+              {refreshError
+                ? `Live refresh issue: ${refreshError}`
+                : `Live refresh${lastUpdatedAt ? `: ${new Date(lastUpdatedAt).toLocaleTimeString()}` : " is warming up"}`}
+            </p>
+            <button className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 py-1 font-semibold" onClick={refreshLeagueView} type="button">
+              Refresh now
+            </button>
+          </div>
         </div>
       </div>
 
       <main className="mx-auto max-w-7xl px-3 py-4 sm:px-6">
-        {displayedTab === "tracker" ? <DraftBoardClient initialSnapshot={draftSnapshot} mode="tracker" trackerStickyClassName="top-[7.25rem] sm:top-[7.75rem]" /> : null}
-        {displayedTab === "grid" ? <DraftHistoryGrid {...draftHistory} variant="compact" /> : null}
-        {displayedTab === "rosters" ? <RosterView snapshot={draftSnapshot} /> : null}
+        {displayedTab === "tracker" ? <DraftBoardClient initialSnapshot={liveDraftSnapshot} mode="tracker" trackerStickyClassName="top-[8.75rem] sm:top-[9.25rem]" /> : null}
+        {displayedTab === "grid" ? <DraftHistoryGrid {...liveDraftHistory} variant="compact" /> : null}
+        {displayedTab === "rosters" ? <RosterView snapshot={liveDraftSnapshot} /> : null}
         {displayedTab === "standings" ? (
           <div className="rounded-[2rem] border border-[var(--border)] bg-[var(--surface)] p-5 shadow-sm">
             <p className="text-xs uppercase tracking-[0.3em] text-[var(--muted)]">Standings</p>
