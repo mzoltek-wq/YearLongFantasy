@@ -231,7 +231,7 @@ function renderBoard() {
     .filter((player) => player.sport === currentSport && player.boardType === currentBoard)
     .filter((player) => currentPositionGroup === "ALL" || normalizePositionGroup(player) === currentPositionGroup)
     .filter((player) => !query || [player.displayName, player.position, player.team, state.notes[player.id], player.injuryStatus, player.upsideNote].filter(Boolean).join(" ").toLowerCase().includes(query))
-    .filter((player) => !hideCrossedOff || !state.crossedOff.includes(player.id))
+    .filter((player) => query || !hideCrossedOff || !state.crossedOff.includes(player.id))
     .sort(comparePlayers)
     .slice(0, 140);
 
@@ -248,12 +248,20 @@ function renderBoard() {
 function renderPlayerCard(player) {
   const node = elements.playerTemplate.content.firstElementChild.cloneNode(true);
   const crossed = state.crossedOff.includes(player.id);
+  const leagueTaken = state.leagueCrossedOff.includes(player.id);
   const watched = state.watchlist.includes(player.id);
   const dnd = state.doNotDraft.includes(player.id);
   node.classList.toggle("crossed", crossed);
   node.querySelector(".rank").textContent = player.rank ?? "-";
   node.querySelector(".player-name").textContent = player.displayName;
-  node.querySelector(".player-meta").textContent = [normalizePositionGroup(player), player.position, player.team, player.source, player.injuryStatus].filter(Boolean).join(" • ");
+  node.querySelector(".player-meta").textContent = [
+    normalizePositionGroup(player),
+    player.position,
+    player.team,
+    player.source,
+    player.injuryStatus,
+    leagueTaken ? "Taken/kept in league app" : "",
+  ].filter(Boolean).join(" • ");
   node.querySelector(".note-input").value = state.notes[player.id] ?? "";
   node.querySelector(".note-input").addEventListener("change", (event) => {
     state.notes[player.id] = event.target.value;
@@ -263,6 +271,11 @@ function renderPlayerCard(player) {
   const badges = node.querySelector(".badges");
   if (player.tier) {
     badges.append(badge(`Tier ${player.tier}`, "gold"));
+  }
+  if (leagueTaken) {
+    badges.append(badge("Taken / kept", "rose"));
+  } else if (crossed) {
+    badges.append(badge("Crossed off", "rose"));
   }
   if (watched) {
     badges.append(badge("Watch", "sky"));
