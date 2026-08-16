@@ -2,6 +2,7 @@ import { Sport } from "@prisma/client";
 
 import {
   approveKeeperSubmission,
+  importFullKeeperGridText,
   importKeeperText,
   importPlayerDatabaseText,
   importTradedPicksText,
@@ -19,6 +20,13 @@ const SAMPLE_KEEPER_TEXT = `3 Nathan Mackinnon (K4) (CM)
 5 Mitch Marner (K1) (CM)
 12 Paolo Banchero (K3)
 14 Clayton Keller (K1), Tage Thompson (K1) (JR)`;
+
+const SAMPLE_FULL_GRID_TEXT = `Round\tMartins\tMatt\tZolt
+1\t\t\t
+2\t\t(RH)\t
+3\tNathan Mackinnon (K4) (CM)\t\t
+4\t\t\t(RH)
+5\tMitch Marner (K1) (CM)\t\t`;
 
 type KeeperIssuePayload = {
   status?: string;
@@ -145,7 +153,39 @@ export async function KeeperWorkspace({
       <div className="grid gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
         <Card>
           <h2 className="text-xl font-semibold">Pre-draft imports</h2>
+          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+            <h3 className="font-semibold text-amber-950">Full grid override</h3>
+            <p className="mt-1 text-sm text-amber-900">
+              Paste the whole keeper grid from Google Sheets. This clears current keeper imports and rebuilds keepers/traded-pick overrides from the grid.
+            </p>
+            <form action={importFullKeeperGridText} className="mt-3 space-y-3">
+              <label className="block space-y-1">
+                <span className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-900">Fallback sport</span>
+                <select className="w-full rounded-xl border border-amber-200 bg-white px-3 py-2" name="fallbackSport">
+                  <option value="">Use player DB or flag</option>
+                  {SPORTS.map((sport) => (
+                    <option key={sport} value={sport}>
+                      {sportWithEmoji(sport)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <textarea
+                className="min-h-52 w-full rounded-2xl border border-amber-200 bg-white px-4 py-3 font-mono text-sm"
+                name="fullKeeperGridText"
+                placeholder={SAMPLE_FULL_GRID_TEXT}
+              />
+              <button className="rounded-full bg-amber-600 px-5 py-2.5 text-sm font-semibold text-white" type="submit">
+                Import full grid and override keepers
+              </button>
+            </form>
+          </div>
+
           <form action={importKeeperText} className="mt-4 space-y-4">
+            <div>
+              <h3 className="font-semibold">Single-owner keeper import</h3>
+              <p className="mt-1 text-sm text-[var(--muted)]">Use this if you want to add or retest one owner at a time.</p>
+            </div>
             <div className="grid gap-3 md:grid-cols-2">
               <label className="space-y-1">
                 <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Keeper owner</span>
