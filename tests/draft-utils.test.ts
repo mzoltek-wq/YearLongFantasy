@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { Sport } from "@prisma/client";
 
 import { OWNER_CODES, OWNER_NAMES } from "@/lib/constants/league";
-import { interpretFullKeeperGrid } from "@/lib/keepers/full-grid";
+import { interpretFullKeeperGrid, normalizeFullKeeperGridInput } from "@/lib/keepers/full-grid";
 import {
   buildSnakeDraftOrder,
   findDuplicateNormalizedNames,
@@ -145,6 +145,26 @@ test("interprets full keeper grid ownership from pasted sheet", () => {
 
   const zoltRound57Pick = pickInterpretations.find((entry) => entry.round === 57 && entry.originalPickOwner.name === "Zolt");
   assert.equal(zoltRound57Pick?.currentOwner.name, "Hoff");
+});
+
+test("preserves leading tab in full grid paste", () => {
+  const owners = OWNER_NAMES.map((name) => ({
+    id: name,
+    name,
+    code: OWNER_CODES[name],
+  }));
+  const ownerByCode = new Map(owners.map((owner) => [owner.code, owner]));
+  const input = readFileSync(fixturePath, "utf8");
+  const normalizedInput = normalizeFullKeeperGridInput(`\n${input}\n`);
+
+  assert.ok(normalizedInput.startsWith("\tHoff"));
+
+  const { interpretations } = interpretFullKeeperGrid(normalizedInput, owners, ownerByCode);
+  const coleCaufield = interpretations.find((entry) => entry.entry?.playerName === "Cole Caulfield");
+
+  assert.equal(coleCaufield?.round, 3);
+  assert.equal(coleCaufield?.originalPickOwner.name, "Zolt");
+  assert.equal(coleCaufield?.currentOwner.name, "Zolt");
 });
 
 test("calculates roster totals and validates league totals", () => {

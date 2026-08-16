@@ -6,7 +6,7 @@ import { IntegrationType, Owner, Sport } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
 import { DEFAULT_TOTAL_ROUNDS } from "@/lib/constants/league";
-import { interpretFullKeeperGrid } from "@/lib/keepers/full-grid";
+import { interpretFullKeeperGrid, normalizeFullKeeperGridInput } from "@/lib/keepers/full-grid";
 import { ParsedKeeperTextEntry, parseKeeperText } from "@/lib/keepers/import";
 import { buildSnakeDraftOrder, normalizePlayerName, parseSportFromValue } from "@/lib/utils/draft";
 
@@ -431,10 +431,10 @@ export async function importFullKeeperGridText(formData: FormData) {
   let redirectPath = keeperFeedbackPath("success", "Full keeper grid imported.");
 
   try {
-    const input = String(formData.get("fullKeeperGridText") ?? "").trim();
+    const input = normalizeFullKeeperGridInput(String(formData.get("fullKeeperGridText") ?? ""));
     const fallbackSport = String(formData.get("fallbackSport") ?? "") as Sport | "";
 
-    if (!input) {
+    if (!input.trim()) {
       throw new Error("Paste the full keeper grid before importing.");
     }
 

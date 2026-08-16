@@ -14,6 +14,13 @@ export type FullGridInterpretation = {
   entry: (ParsedKeeperTextEntry & { playerName: string }) | null;
 };
 
+export function normalizeFullKeeperGridInput(input: string) {
+  return input
+    .replace(/^\uFEFF/, "")
+    .replace(/^(?:[ \t]*\r?\n)+/, "")
+    .replace(/(?:\r?\n[ \t]*)+$/, "");
+}
+
 export function getOwnerCodeFromRawValue(rawValue: string, ownerByCode: Map<string, FullGridOwner>) {
   for (const match of rawValue.matchAll(/\(([A-Z]{2})\)/gi)) {
     const code = match[1]?.toUpperCase();
@@ -48,7 +55,7 @@ export function resolveOwnerHeaderOwner(value: string, owners: FullGridOwner[]) 
 }
 
 export function interpretFullKeeperGrid(input: string, owners: FullGridOwner[], ownerByCode: Map<string, FullGridOwner>) {
-  const rows = input.split(/\r?\n/).map((row) => row.split("\t").map((cell) => cell.trim()));
+  const rows = normalizeFullKeeperGridInput(input).split(/\r?\n/).map((row) => row.split("\t").map((cell) => cell.trim()));
   const headerIndex = rows.findIndex((row) => row.filter((cell) => resolveOwnerHeaderOwner(cell, owners)).length >= 2);
 
   if (headerIndex === -1) {
