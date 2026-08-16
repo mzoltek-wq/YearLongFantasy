@@ -29,6 +29,14 @@ type PlayerResolution = {
   team: string | null;
   warnings: string[];
   rosterWarnings: string[];
+  unavailableSelection: {
+    overallPickNumber: number;
+    round: number;
+    slotNumber: number;
+    ownerName: string;
+    isKeeper: boolean;
+    playerName: string;
+  } | null;
 };
 
 async function requestJson<T>(input: RequestInfo, init?: RequestInit) {
@@ -53,6 +61,7 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
   const [playerName, setPlayerName] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [playerResolution, setPlayerResolution] = useState<PlayerResolution | null>(null);
+  const [editingPickNumber, setEditingPickNumber] = useState<number | null>(null);
   const [isResolvingPlayer, setIsResolvingPlayer] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +73,11 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
 
   const currentPick = snapshot.draftWindow.currentPick;
   const nextPick = snapshot.draftWindow.nextPick;
+  const editingPick = editingPickNumber ? snapshot.slots.find((slot) => slot.overallPickNumber === editingPickNumber) ?? null : null;
+  const activePick = editingPick ?? currentPick;
+  const activePickNumber = activePick?.overallPickNumber ?? null;
+  const unavailableSelection = playerResolution?.unavailableSelection ?? null;
+  const isPlayerUnavailable = Boolean(unavailableSelection);
   const isTrackerMode = mode === "tracker";
   const recentPickLimit = isTrackerMode ? 10 : 5;
   const upcomingPickLimit = isTrackerMode ? 10 : 5;
@@ -79,7 +93,7 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
   useEffect(() => {
     const trimmedPlayerName = playerName.trim();
 
-    if (!currentPick || trimmedPlayerName.length < 2) {
+    if (!activePickNumber || trimmedPlayerName.length < 2) {
       return;
     }
 
@@ -88,7 +102,7 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
       requestJson<PlayerResolution>("/api/draft/resolve-player", {
         method: "POST",
         body: JSON.stringify({
-          overallPickNumber: currentPick.overallPickNumber,
+          overallPickNumber: activePickNumber,
           playerName: trimmedPlayerName,
         }),
       })
@@ -113,7 +127,7 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
       isCurrent = false;
       clearTimeout(timeout);
     };
-  }, [currentPick, playerName]);
+  }, [activePickNumber, playerName]);
 
   const completedPicks = useMemo(
     () =>
@@ -183,26 +197,43 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
     setError(null);
     setMessage(null);
 
-    if (!currentPick) {
+    if (!activePick) {
       setError("The draft is complete.");
       return;
     }
 
     try {
       await requestJson("/api/draft/picks", {
-        method: "POST",
+        method: editingPick ? "PUT" : "POST",
         body: JSON.stringify({
-          overallPickNumber: currentPick.overallPickNumber,
+          overallPickNumber: activePick.overallPickNumber,
           playerName,
         }),
       });
       setPlayerName("");
       setPlayerResolution(null);
-      setMessage(`Saved pick ${currentPick.overallPickNumber}.`);
+      setEditingPickNumber(null);
+      setMessage(editingPick ? `Updated pick ${activePick.overallPickNumber}.` : `Saved pick ${activePick.overallPickNumber}.`);
       await refresh();
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "Could not save pick.");
     }
+  }
+
+  function startEditingPick(slot: LeagueSnapshot["slots"][number]) {
+    setError(null);
+    setMessage(null);
+    setEditingPickNumber(slot.overallPickNumber);
+    setPlayerName(slot.selectedPlayerName ?? "");
+    setPlayerResolution(null);
+    setIsResolvingPlayer(Boolean(slot.selectedPlayerName));
+  }
+
+  function cancelEditingPick() {
+    setEditingPickNumber(null);
+    setPlayerName("");
+    setPlayerResolution(null);
+    setIsResolvingPlayer(false);
   }
 
   async function undoPick(overallPickNumber: number) {
@@ -244,6 +275,18 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
             ) : (
               <p className="text-sm text-[var(--muted)]">All picks are currently filled.</p>
             )}
+            {editingPick ? (
+              <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p>
+                    Editing pick <span className="font-semibold">{editingPick.overallPickNumber}</span> for <span className="font-semibold">{editingPick.currentOwner.name}</span>.
+                  </p>
+                  <button className="rounded-full border border-sky-200 px-3 py-1 text-xs font-semibold" onClick={cancelEditingPick} type="button">
+                    Cancel edit
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <form className="space-y-4" onSubmit={submitPick}>
@@ -289,7 +332,7 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
                     Source: sport from {playerResolution.sportSource.replace("-", " ")}, positions from {playerResolution.positionSource.replace("-", " ")}.
                   </p>
                   {[...playerResolution.warnings, ...playerResolution.rosterWarnings].length > 0 ? (
-                    <div className="space-y-1 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    <div className={`space-y-1 rounded-xl px-3 py-2 text-xs ${isPlayerUnavailable ? "bg-rose-50 text-rose-900" : "bg-amber-50 text-amber-900"}`}>
                       {[...playerResolution.warnings, ...playerResolution.rosterWarnings].map((warning) => (
                         <p key={warning}>{warning}</p>
                       ))}
@@ -330,10 +373,10 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
 
             <button
               className="w-full rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={!currentPick}
+              disabled={!activePick || isPlayerUnavailable}
               type="submit"
             >
-              Save current pick
+              {editingPick ? `Update pick ${editingPick.overallPickNumber}` : "Save current pick"}
             </button>
           </form>
 
@@ -603,14 +646,24 @@ export function DraftBoardClient({ initialSnapshot, mode = "commissioner", track
                       </td>
                       <td className="px-4 py-3">{slot.isKeeper ? "Keeper" : "Live"}</td>
                       <td className="px-4 py-3">
-                        <button
-                          className="rounded-full border border-[var(--border)] px-3 py-1 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40"
-                          disabled={!slot.selectedPlayerName || slot.isKeeper}
-                          onClick={() => undoPick(slot.overallPickNumber)}
-                          type="button"
-                        >
-                          Undo
-                        </button>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            className="rounded-full border border-[var(--border)] px-3 py-1 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+                            disabled={!slot.selectedPlayerName || slot.isKeeper}
+                            onClick={() => startEditingPick(slot)}
+                            type="button"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            className="rounded-full border border-[var(--border)] px-3 py-1 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+                            disabled={!slot.selectedPlayerName || slot.isKeeper}
+                            onClick={() => undoPick(slot.overallPickNumber)}
+                            type="button"
+                          >
+                            Undo
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}

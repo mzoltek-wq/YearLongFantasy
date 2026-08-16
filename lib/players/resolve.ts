@@ -30,6 +30,7 @@ export type DraftPlayerResolution = {
   positionSource: "player-db" | "typed-value" | "default" | "unknown";
   team: string | null;
   warnings: string[];
+  unavailableSelection: DraftPlayerUnavailableSelection | null;
 };
 
 export type DraftPlayerCandidate = {
@@ -38,6 +39,15 @@ export type DraftPlayerCandidate = {
   sport: Sport;
   positions: PositionCode[];
   team: string | null;
+};
+
+export type DraftPlayerUnavailableSelection = {
+  overallPickNumber: number;
+  round: number;
+  slotNumber: number;
+  ownerName: string;
+  isKeeper: boolean;
+  playerName: string;
 };
 
 export function cleanDraftPlayerName(rawValue: string) {
@@ -135,6 +145,53 @@ export async function resolveDraftPlayer(playerName: string, tx: Prisma.Transact
     positionSource: metadataPositions.length > 0 ? "player-db" : typedPositions.length > 0 ? "typed-value" : sport === Sport.GOLF ? "default" : "unknown",
     team: typeof metadata?.team === "string" ? metadata.team : null,
     warnings,
+    unavailableSelection: null,
+  };
+}
+
+export async function findExistingDraftSelection({
+  playerId,
+  normalizedName,
+  overallPickNumberToIgnore,
+  tx = prisma,
+}: {
+  playerId?: string | null;
+  normalizedName: string;
+  overallPickNumberToIgnore?: number;
+  tx?: Prisma.TransactionClient | typeof prisma;
+}): Promise<DraftPlayerUnavailableSelection | null> {
+  const slots = await tx.draftSlot.findMany({
+    where: {
+      selectedPlayerName: { not: null },
+      ...(overallPickNumberToIgnore
+        ? {
+            overallPickNumber: { not: overallPickNumberToIgnore },
+          }
+        : {}),
+    },
+    include: {
+      currentOwner: true,
+    },
+  });
+  const existingSlot = slots.find((slot) => {
+    if (playerId && slot.selectedPlayerId === playerId) {
+      return true;
+    }
+
+    return normalizePlayerName(slot.selectedPlayerName ?? "") === normalizedName;
+  });
+
+  if (!existingSlot?.selectedPlayerName) {
+    return null;
+  }
+
+  return {
+    overallPickNumber: existingSlot.overallPickNumber,
+    round: existingSlot.round,
+    slotNumber: existingSlot.slotNumber,
+    ownerName: existingSlot.currentOwner.name,
+    isKeeper: existingSlot.isKeeper,
+    playerName: existingSlot.selectedPlayerName,
   };
 }
 
@@ -148,10 +205,22 @@ export async function resolveDraftPlayerWithRosterWarnings({
   overallPickNumberToIgnore?: number;
 }) {
   const resolution = await resolveDraftPlayer(playerName);
+  const unavailableSelection = await findExistingDraftSelection({
+    playerId: resolution.matchedPlayerId,
+    normalizedName: normalizePlayerName(resolution.matchedDisplayName ?? resolution.playerName),
+    overallPickNumberToIgnore,
+  });
+  const duplicateWarnings = unavailableSelection
+    ? [
+        `${unavailableSelection.playerName} is already ${unavailableSelection.isKeeper ? "kept" : "drafted"} by ${unavailableSelection.ownerName} at pick ${unavailableSelection.overallPickNumber}.`,
+      ]
+    : [];
 
   if (!resolution.sport) {
     return {
       ...resolution,
+      warnings: [...resolution.warnings, ...duplicateWarnings],
+      unavailableSelection,
       rosterWarnings: [] as string[],
     };
   }
@@ -187,6 +256,8 @@ export async function resolveDraftPlayerWithRosterWarnings({
 
   return {
     ...resolution,
+    warnings: [...resolution.warnings, ...duplicateWarnings],
+    unavailableSelection,
     rosterWarnings,
   };
 }

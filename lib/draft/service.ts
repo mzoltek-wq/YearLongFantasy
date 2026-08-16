@@ -2,7 +2,7 @@ import { DraftSelectionType, DraftSlot, Prisma, Sport } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
 import { pushDraftPickWriteback } from "@/lib/import/google-sheets";
-import { buildPlayerMetadata, resolveDraftPlayer } from "@/lib/players/resolve";
+import { buildPlayerMetadata, findExistingDraftSelection, resolveDraftPlayer } from "@/lib/players/resolve";
 import { DraftSlotWithRelations, KeeperWithRelations, LeagueSnapshot } from "@/lib/types/draft";
 import { normalizePlayerName } from "@/lib/utils/draft";
 import { calculateRosterTotals, getCurrentDraftWindow, validateDraftIntegrity, validateLeagueTotals } from "@/lib/validation/draft";
@@ -123,6 +123,28 @@ async function enforceOwnerSportLimit(
   }
 }
 
+async function enforcePlayerAvailability(
+  tx: Prisma.TransactionClient,
+  input: {
+    playerId?: string | null;
+    playerName: string;
+    overallPickNumberToIgnore?: number;
+  },
+) {
+  const existingSelection = await findExistingDraftSelection({
+    playerId: input.playerId,
+    normalizedName: normalizePlayerName(input.playerName),
+    overallPickNumberToIgnore: input.overallPickNumberToIgnore,
+    tx,
+  });
+
+  if (existingSelection) {
+    throw new Error(
+      `"${existingSelection.playerName}" is already ${existingSelection.isKeeper ? "kept" : "drafted"} by ${existingSelection.ownerName} at pick ${existingSelection.overallPickNumber}.`,
+    );
+  }
+}
+
 async function findManagerForOwner(tx: Prisma.TransactionClient, ownerId: string) {
   const owner = await tx.owner.findUnique({
     where: { id: ownerId },
@@ -220,18 +242,10 @@ export async function makeDraftPick(input: {
     const duplicate = await tx.player.findUnique({
       where: { normalizedName },
     });
-
-    if (duplicate) {
-      const duplicateSlot = await tx.draftSlot.findFirst({
-        where: {
-          selectedPlayerId: duplicate.id,
-        },
-      });
-
-      if (duplicateSlot) {
-        throw new Error(`"${playerName}" has already been selected.`);
-      }
-    }
+    await enforcePlayerAvailability(tx, {
+      playerId: duplicate?.id ?? resolution.matchedPlayerId,
+      playerName,
+    });
 
     const slot = await tx.draftSlot.findUnique({
       where: { overallPickNumber: input.overallPickNumber },
@@ -303,6 +317,10 @@ export async function updateDraftPick(input: {
       throw new Error("Draft slot not found.");
     }
 
+    if (slot.isKeeper) {
+      throw new Error("Keeper slots cannot be edited from the draft board.");
+    }
+
     const resolution = await resolveDraftPlayer(input.playerName, tx);
     const sport = input.sport ?? resolution.sport;
 
@@ -313,19 +331,11 @@ export async function updateDraftPick(input: {
     const playerName = resolution.matchedDisplayName ?? resolution.playerName;
     const normalizedName = normalizePlayerName(playerName);
     const duplicatePlayer = await tx.player.findUnique({ where: { normalizedName } });
-
-    if (duplicatePlayer) {
-      const duplicateSlot = await tx.draftSlot.findFirst({
-        where: {
-          overallPickNumber: { not: input.overallPickNumber },
-          selectedPlayerId: duplicatePlayer.id,
-        },
-      });
-
-      if (duplicateSlot) {
-        throw new Error(`"${playerName}" has already been selected.`);
-      }
-    }
+    await enforcePlayerAvailability(tx, {
+      playerId: duplicatePlayer?.id ?? resolution.matchedPlayerId,
+      playerName,
+      overallPickNumberToIgnore: input.overallPickNumber,
+    });
 
     await enforceOwnerSportLimit(tx, {
       ownerId: slot.currentOwnerId,
