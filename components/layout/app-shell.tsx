@@ -19,7 +19,7 @@ const links = [
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
 
-  if (pathname.startsWith("/tracker") || pathname.startsWith("/league-view")) {
+  if (pathname.startsWith("/tracker") || pathname.startsWith("/league-view") || pathname.startsWith("/zolteksmagicdraftassistant")) {
     return <>{children}</>;
   }
 

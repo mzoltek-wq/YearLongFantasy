@@ -1,0 +1,367 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
+type BoardType = "redraft" | "dynasty";
+type Sport = "HOCKEY" | "BASEBALL" | "FOOTBALL" | "BASKETBALL" | "GOLF";
+
+type TakenPlayer = {
+  displayName: string;
+  normalizedName: string;
+  sport: Sport | null;
+  managerName: string | null;
+  round: number | null;
+  overallPickNumber: number | null;
+  selectionType: "KEEPER" | "DRAFTED";
+  source: string;
+};
+
+type AssistantPlayer = {
+  id: string;
+  normalizedName: string;
+  displayName: string;
+  sport: Sport;
+  boardType: BoardType;
+  source: string;
+  rank: number | null;
+  position: string | null;
+  positionGroup: string | null;
+  team: string | null;
+  tier: number | null;
+  injuryStatus: string | null;
+  upsideNote: string | null;
+  isTaken: boolean;
+  taken: TakenPlayer | null;
+};
+
+type AssistantState = {
+  players: AssistantPlayer[];
+  unavailablePlayers: TakenPlayer[];
+  generatedAt: string;
+};
+
+const sports: Array<[Sport, string]> = [
+  ["HOCKEY", "Hockey"],
+  ["BASEBALL", "Baseball"],
+  ["FOOTBALL", "Football"],
+  ["BASKETBALL", "Basketball"],
+  ["GOLF", "Golf"],
+];
+
+const boards: Array<[BoardType, string]> = [
+  ["redraft", "Year to year"],
+  ["dynasty", "Dynasty"],
+];
+
+const positionGroups: Record<Sport, Array<[string, string]>> = {
+  HOCKEY: [
+    ["ALL", "All"],
+    ["F", "Forwards"],
+    ["D", "Defense"],
+    ["G", "Goalies"],
+  ],
+  BASEBALL: [
+    ["ALL", "All"],
+    ["C", "C"],
+    ["1B", "1B"],
+    ["2B", "2B"],
+    ["3B", "3B"],
+    ["SS", "SS"],
+    ["OF", "OF"],
+    ["SP", "SP"],
+    ["RP", "RP"],
+  ],
+  FOOTBALL: [
+    ["ALL", "All"],
+    ["QB", "QB"],
+    ["RB", "RB"],
+    ["WR", "WR"],
+    ["TE", "TE"],
+    ["DEF", "DEF"],
+  ],
+  BASKETBALL: [
+    ["ALL", "All"],
+    ["G", "Guards"],
+    ["F", "Forwards"],
+    ["C", "Centers"],
+  ],
+  GOLF: [["ALL", "All"]],
+};
+
+const sportEmoji: Record<Sport, string> = {
+  HOCKEY: "🏒",
+  BASEBALL: "⚾️",
+  FOOTBALL: "🏈",
+  BASKETBALL: "🏀",
+  GOLF: "⛳",
+};
+
+function useLocalStringArray(key: string) {
+  const [values, setValues] = useState<string[]>(() => {
+    if (typeof window === "undefined") {
+      return [];
+    }
+
+    try {
+      const stored = window.localStorage.getItem(key);
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch {
+      return [];
+    }
+
+    return [];
+  });
+
+  function update(nextValues: string[]) {
+    setValues(nextValues);
+    window.localStorage.setItem(key, JSON.stringify(nextValues));
+  }
+
+  return [values, update] as const;
+}
+
+function toggleValue(values: string[], value: string) {
+  return values.includes(value) ? values.filter((entry) => entry !== value) : [...values, value];
+}
+
+function formatTaken(taken: TakenPlayer | null) {
+  if (!taken) {
+    return "";
+  }
+
+  const verb = taken.selectionType === "KEEPER" ? "Kept" : "Drafted";
+  const manager = taken.managerName ? ` by ${taken.managerName}` : "";
+  const pick = taken.overallPickNumber ? ` at pick ${taken.overallPickNumber}` : "";
+  const round = taken.round ? `, round ${taken.round}` : "";
+  return `${verb}${manager}${pick}${round}`;
+}
+
+export function MagicDraftAssistant() {
+  const [state, setState] = useState<AssistantState | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [sport, setSport] = useState<Sport>("HOCKEY");
+  const [boardType, setBoardType] = useState<BoardType>("redraft");
+  const [positionGroup, setPositionGroup] = useState("ALL");
+  const [query, setQuery] = useState("");
+  const [hideTaken, setHideTaken] = useState(true);
+  const [watchlist, setWatchlist] = useLocalStringArray("magic-assistant-watchlist");
+  const [doNotDraft, setDoNotDraft] = useLocalStringArray("magic-assistant-dnd");
+  const [manualCrossedOff, setManualCrossedOff] = useLocalStringArray("magic-assistant-crossed-off");
+
+  async function loadState({ quiet = false } = {}) {
+    try {
+      if (!quiet) {
+        setError(null);
+      }
+      const response = await fetch("/api/zolteksmagicdraftassistant/state", { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      setState(await response.json());
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Could not load assistant data.");
+    }
+  }
+
+  useEffect(() => {
+    const initialTimer = window.setTimeout(() => {
+      loadState();
+    }, 0);
+    const timer = window.setInterval(() => {
+      loadState({ quiet: true });
+    }, 5000);
+    return () => {
+      window.clearTimeout(initialTimer);
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const players = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    return (state?.players ?? [])
+      .filter((player) => player.sport === sport && player.boardType === boardType)
+      .filter((player) => positionGroup === "ALL" || player.positionGroup === positionGroup)
+      .filter((player) => {
+        if (!normalizedQuery) {
+          return true;
+        }
+        return [player.displayName, player.position, player.positionGroup, player.team, player.source, player.upsideNote, player.injuryStatus]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedQuery);
+      })
+      .filter((player) => normalizedQuery || !hideTaken || (!player.isTaken && !manualCrossedOff.includes(player.id)))
+      .sort((left, right) => {
+        if (watchlist.includes(left.id) !== watchlist.includes(right.id)) {
+          return watchlist.includes(left.id) ? -1 : 1;
+        }
+        if (doNotDraft.includes(left.id) !== doNotDraft.includes(right.id)) {
+          return doNotDraft.includes(left.id) ? 1 : -1;
+        }
+        return (left.rank ?? 999999) - (right.rank ?? 999999);
+      })
+      .slice(0, 180);
+  }, [boardType, doNotDraft, hideTaken, manualCrossedOff, positionGroup, query, sport, state?.players, watchlist]);
+
+  const currentBoardPlayers = (state?.players ?? []).filter((player) => player.sport === sport && player.boardType === boardType);
+  const takenCount = currentBoardPlayers.filter((player) => player.isTaken || manualCrossedOff.includes(player.id)).length;
+  const availableCount = currentBoardPlayers.length - takenCount;
+
+  return (
+    <div className="min-h-screen bg-[#0f172a] text-[#f8fafc]">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
+        <header className="rounded-[2rem] border border-white/10 bg-white/[0.06] p-5 shadow-2xl shadow-black/20 backdrop-blur">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-[0.45em] text-emerald-200/80">Zoltek&apos;s magic draft assistant</p>
+              <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-5xl">Best available, minus reality</h1>
+              <p className="mt-2 max-w-3xl text-sm text-slate-300">
+                Hidden private board backed by the league app. Taken players poll from the live draft database every five seconds.
+              </p>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center text-sm">
+              <div className="rounded-2xl bg-emerald-400/15 px-4 py-3">
+                <div className="text-2xl font-black">{availableCount}</div>
+                <div className="text-xs uppercase tracking-[0.25em] text-emerald-100/80">Available</div>
+              </div>
+              <div className="rounded-2xl bg-rose-400/15 px-4 py-3">
+                <div className="text-2xl font-black">{takenCount}</div>
+                <div className="text-xs uppercase tracking-[0.25em] text-rose-100/80">Taken</div>
+              </div>
+              <div className="rounded-2xl bg-sky-400/15 px-4 py-3">
+                <div className="text-2xl font-black">{watchlist.length}</div>
+                <div className="text-xs uppercase tracking-[0.25em] text-sky-100/80">Watch</div>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <section className="grid gap-3 rounded-[2rem] border border-white/10 bg-white/[0.06] p-4 backdrop-blur">
+          <div className="flex flex-wrap gap-2">
+            {sports.map(([value, label]) => (
+              <button
+                className={`rounded-full border px-4 py-2 text-sm font-bold transition ${sport === value ? "border-emerald-300 bg-emerald-300 text-slate-950" : "border-white/10 bg-white/5 text-slate-200 hover:border-emerald-200"}`}
+                key={value}
+                onClick={() => {
+                  setSport(value);
+                  setPositionGroup("ALL");
+                }}
+                type="button"
+              >
+                {sportEmoji[value]} {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {boards.map(([value, label]) => (
+              <button
+                className={`rounded-full border px-4 py-2 text-sm font-bold transition ${boardType === value ? "border-sky-300 bg-sky-300 text-slate-950" : "border-white/10 bg-white/5 text-slate-200 hover:border-sky-200"}`}
+                key={value}
+                onClick={() => setBoardType(value)}
+                type="button"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {positionGroups[sport].map(([value, label]) => (
+              <button
+                className={`rounded-full border px-3 py-1.5 text-xs font-bold transition ${positionGroup === value ? "border-amber-200 bg-amber-200 text-slate-950" : "border-white/10 bg-white/5 text-slate-300 hover:border-amber-100"}`}
+                key={value}
+                onClick={() => setPositionGroup(value)}
+                type="button"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-[1fr_auto_auto] md:items-center">
+            <input
+              className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-base text-white outline-none ring-emerald-300/40 placeholder:text-slate-500 focus:ring-4"
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search player, team, position, note"
+              value={query}
+            />
+            <label className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-slate-200">
+              <input checked={hideTaken} onChange={(event) => setHideTaken(event.target.checked)} type="checkbox" />
+              Hide taken
+            </label>
+            <button className="rounded-2xl bg-white px-4 py-3 text-sm font-black text-slate-950" onClick={() => loadState()} type="button">
+              Refresh now
+            </button>
+          </div>
+
+          <div className="text-xs text-slate-400">
+            {error ? <span className="text-rose-200">Assistant refresh failed: {error}</span> : null}
+            {!error && state?.generatedAt ? <span>Last live check: {new Date(state.generatedAt).toLocaleTimeString()}</span> : null}
+          </div>
+        </section>
+
+        <main className="grid gap-3">
+          {players.map((player) => {
+            const watched = watchlist.includes(player.id);
+            const dnd = doNotDraft.includes(player.id);
+            const crossed = manualCrossedOff.includes(player.id);
+            const unavailable = player.isTaken || crossed;
+
+            return (
+              <article
+                className={`rounded-[1.5rem] border p-4 shadow-xl shadow-black/10 transition ${
+                  unavailable ? "border-rose-300/25 bg-rose-950/25 opacity-70" : watched ? "border-sky-200/40 bg-sky-950/25" : "border-white/10 bg-white/[0.07]"
+                }`}
+                key={player.id}
+              >
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-white px-3 py-1 text-sm font-black text-slate-950">#{player.rank ?? "-"}</span>
+                      <h2 className="text-xl font-black">{player.displayName}</h2>
+                      {player.isTaken ? <span className="rounded-full bg-rose-300 px-3 py-1 text-xs font-black text-rose-950">Taken / kept</span> : null}
+                      {crossed && !player.isTaken ? <span className="rounded-full bg-rose-300 px-3 py-1 text-xs font-black text-rose-950">Crossed off</span> : null}
+                      {watched ? <span className="rounded-full bg-sky-300 px-3 py-1 text-xs font-black text-sky-950">Watch</span> : null}
+                      {dnd ? <span className="rounded-full bg-zinc-300 px-3 py-1 text-xs font-black text-zinc-950">DND</span> : null}
+                    </div>
+                    <p className="mt-2 text-sm text-slate-300">
+                      {[sportEmoji[player.sport], player.positionGroup, player.position, player.team, player.source].filter(Boolean).join(" • ")}
+                    </p>
+                    {player.taken ? <p className="mt-2 text-sm font-bold text-rose-100">{formatTaken(player.taken)}</p> : null}
+                    {player.injuryStatus || player.upsideNote ? (
+                      <p className="mt-2 rounded-2xl bg-amber-200/10 px-3 py-2 text-sm text-amber-100">
+                        {[player.injuryStatus, player.upsideNote].filter(Boolean).join(" • ")}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <button className="rounded-full border border-white/10 px-3 py-2 text-xs font-bold text-slate-200" onClick={() => setWatchlist(toggleValue(watchlist, player.id))} type="button">
+                      {watched ? "Unwatch" : "Watch"}
+                    </button>
+                    <button className="rounded-full border border-white/10 px-3 py-2 text-xs font-bold text-slate-200" onClick={() => setDoNotDraft(toggleValue(doNotDraft, player.id))} type="button">
+                      {dnd ? "Allow" : "DND"}
+                    </button>
+                    <button className="rounded-full border border-white/10 px-3 py-2 text-xs font-bold text-slate-200" onClick={() => setManualCrossedOff(toggleValue(manualCrossedOff, player.id))} type="button">
+                      {crossed ? "Restore" : "Cross off"}
+                    </button>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+
+          {!players.length ? (
+            <div className="rounded-[1.5rem] border border-white/10 bg-white/[0.06] p-8 text-center text-slate-300">
+              No players match this view. If you searched for a taken player, clear position filters or turn off hide taken.
+            </div>
+          ) : null}
+        </main>
+      </div>
+    </div>
+  );
+}

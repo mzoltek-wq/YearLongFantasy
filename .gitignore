@@ -4,6 +4,7 @@ node_modules
 dist
 coverage
 pnpm-debug.log*
+tsconfig.tsbuildinfo
 .env
 .DS_Store
 prisma/dev.db
