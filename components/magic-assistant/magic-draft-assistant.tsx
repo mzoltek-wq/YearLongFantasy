@@ -32,12 +32,20 @@ type AssistantPlayer = {
   upsideNote: string | null;
   isTaken: boolean;
   taken: TakenPlayer | null;
+  isManualWatch?: boolean;
 };
 
 type AssistantState = {
   players: AssistantPlayer[];
   unavailablePlayers: TakenPlayer[];
   generatedAt: string;
+};
+
+type ManualWatchEntry = {
+  id: string;
+  displayName: string;
+  normalizedName: string;
+  sport: Sport;
 };
 
 type MagicDraftAssistantProps = {
@@ -130,8 +138,42 @@ function useLocalStringArray(key: string) {
   return [values, update] as const;
 }
 
+function useLocalManualWatchEntries(key: string) {
+  const [values, setValues] = useState<ManualWatchEntry[]>(() => {
+    if (typeof window === "undefined") {
+      return [];
+    }
+
+    try {
+      const stored = window.localStorage.getItem(key);
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch {
+      return [];
+    }
+
+    return [];
+  });
+
+  function update(nextValues: ManualWatchEntry[]) {
+    setValues(nextValues);
+    window.localStorage.setItem(key, JSON.stringify(nextValues));
+  }
+
+  return [values, update] as const;
+}
+
 function toggleValue(values: string[], value: string) {
   return values.includes(value) ? values.filter((entry) => entry !== value) : [...values, value];
+}
+
+function normalizeName(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s'-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function formatTaken(taken: TakenPlayer | null) {
@@ -148,6 +190,10 @@ function formatTaken(taken: TakenPlayer | null) {
 
 function matchesPositionGroup(player: AssistantPlayer, selectedGroup: string) {
   if (selectedGroup === "ALL") {
+    return true;
+  }
+
+  if (player.isManualWatch && !player.positionGroup) {
     return true;
   }
 
@@ -172,9 +218,37 @@ export function MagicDraftAssistant({
   const [query, setQuery] = useState("");
   const [hideTaken, setHideTaken] = useState(true);
   const [showWatchOnly, setShowWatchOnly] = useState(false);
+  const [manualWatchName, setManualWatchName] = useState("");
+  const [manualWatchSport, setManualWatchSport] = useState<Sport>("FOOTBALL");
   const [watchlist, setWatchlist] = useLocalStringArray(`${storageKeyPrefix}-watchlist`);
   const [doNotDraft, setDoNotDraft] = useLocalStringArray(`${storageKeyPrefix}-dnd`);
   const [manualCrossedOff, setManualCrossedOff] = useLocalStringArray(`${storageKeyPrefix}-crossed-off`);
+  const [manualWatchEntries, setManualWatchEntries] = useLocalManualWatchEntries(`${storageKeyPrefix}-manual-watchlist`);
+
+  function addManualWatchEntry() {
+    const displayName = manualWatchName.trim();
+    const normalizedName = normalizeName(displayName);
+
+    if (!displayName || !normalizedName) {
+      return;
+    }
+
+    const existingPlayerIds = (state?.players ?? [])
+      .filter((player) => player.sport === manualWatchSport && player.normalizedName === normalizedName)
+      .map((player) => player.id);
+
+    if (existingPlayerIds.length) {
+      setWatchlist(Array.from(new Set([...watchlist, ...existingPlayerIds])));
+      setManualWatchName("");
+      return;
+    }
+
+    const id = `manual:${manualWatchSport}:${normalizedName}`;
+    if (!manualWatchEntries.some((entry) => entry.id === id)) {
+      setManualWatchEntries([...manualWatchEntries, { displayName, id, normalizedName, sport: manualWatchSport }]);
+    }
+    setManualWatchName("");
+  }
 
   async function loadState({ quiet = false } = {}) {
     try {
@@ -206,7 +280,35 @@ export function MagicDraftAssistant({
 
   const players = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    return (state?.players ?? [])
+    const takenByName = new Map(
+      (state?.unavailablePlayers ?? [])
+        .filter((taken) => taken.sport)
+        .map((taken) => [`${taken.sport}:${taken.normalizedName}`, taken] as const),
+    );
+    const manualPlayers: AssistantPlayer[] = manualWatchEntries.map((entry) => {
+      const taken = takenByName.get(`${entry.sport}:${entry.normalizedName}`) ?? null;
+
+      return {
+        boardType,
+        displayName: entry.displayName,
+        id: entry.id,
+        injuryStatus: null,
+        isManualWatch: true,
+        isTaken: Boolean(taken),
+        normalizedName: entry.normalizedName,
+        position: null,
+        positionGroup: null,
+        rank: null,
+        source: "Manual watchlist",
+        sport: entry.sport,
+        taken,
+        team: null,
+        tier: null,
+        upsideNote: "Manual reminder",
+      };
+    });
+
+    return [...(state?.players ?? []), ...manualPlayers]
       .filter((player) => player.sport === sport && player.boardType === boardType)
       .filter((player) => matchesPositionGroup(player, positionGroup))
       .filter((player) => {
@@ -219,9 +321,12 @@ export function MagicDraftAssistant({
           .toLowerCase()
           .includes(normalizedQuery);
       })
-      .filter((player) => !showWatchOnly || watchlist.includes(player.id))
+      .filter((player) => !showWatchOnly || player.isManualWatch || watchlist.includes(player.id))
       .filter((player) => normalizedQuery || !hideTaken || (!player.isTaken && !manualCrossedOff.includes(player.id)))
       .sort((left, right) => {
+        if (left.isManualWatch !== right.isManualWatch) {
+          return left.isManualWatch ? -1 : 1;
+        }
         if (watchlist.includes(left.id) !== watchlist.includes(right.id)) {
           return watchlist.includes(left.id) ? -1 : 1;
         }
@@ -231,11 +336,12 @@ export function MagicDraftAssistant({
         return (left.rank ?? 999999) - (right.rank ?? 999999);
       })
       .slice(0, 180);
-  }, [boardType, doNotDraft, hideTaken, manualCrossedOff, positionGroup, query, showWatchOnly, sport, state?.players, watchlist]);
+  }, [boardType, doNotDraft, hideTaken, manualCrossedOff, manualWatchEntries, positionGroup, query, showWatchOnly, sport, state?.players, state?.unavailablePlayers, watchlist]);
 
   const currentBoardPlayers = (state?.players ?? []).filter((player) => player.sport === sport && player.boardType === boardType);
   const takenCount = currentBoardPlayers.filter((player) => player.isTaken || manualCrossedOff.includes(player.id)).length;
   const availableCount = currentBoardPlayers.length - takenCount;
+  const watchCount = watchlist.length + manualWatchEntries.length;
 
   return (
     <div className="min-h-screen bg-[#0f172a] text-[#f8fafc]">
@@ -264,7 +370,7 @@ export function MagicDraftAssistant({
                 onClick={() => setShowWatchOnly((current) => !current)}
                 type="button"
               >
-                <div className="text-2xl font-black">{watchlist.length}</div>
+                <div className="text-2xl font-black">{watchCount}</div>
                 <div className={`text-xs uppercase tracking-[0.25em] ${showWatchOnly ? "text-slate-800" : "text-sky-100/80"}`}>Watch</div>
               </button>
             </div>
@@ -335,6 +441,35 @@ export function MagicDraftAssistant({
             </button>
           </div>
 
+          <form
+            className="grid gap-3 rounded-2xl border border-sky-200/20 bg-sky-300/10 p-3 md:grid-cols-[1fr_auto_auto]"
+            onSubmit={(event) => {
+              event.preventDefault();
+              addManualWatchEntry();
+            }}
+          >
+            <input
+              className="w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-base text-white outline-none ring-sky-300/40 placeholder:text-slate-500 focus:ring-4"
+              onChange={(event) => setManualWatchName(event.target.value)}
+              placeholder="Manually add player to watchlist"
+              value={manualWatchName}
+            />
+            <select
+              className="rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-base font-bold text-white outline-none ring-sky-300/40 focus:ring-4"
+              onChange={(event) => setManualWatchSport(event.target.value as Sport)}
+              value={manualWatchSport}
+            >
+              {sports.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <button className="rounded-2xl bg-sky-300 px-4 py-3 text-sm font-black text-slate-950" type="submit">
+              Add watch
+            </button>
+          </form>
+
           <div className="text-xs text-slate-400">
             {error ? <span className="text-rose-200">Assistant refresh failed: {error}</span> : null}
             {!error && state?.generatedAt ? <span>Last live check: {new Date(state.generatedAt).toLocaleTimeString()}</span> : null}
@@ -360,6 +495,7 @@ export function MagicDraftAssistant({
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="rounded-full bg-white px-3 py-1 text-sm font-black text-slate-950">#{player.rank ?? "-"}</span>
                       <h2 className="text-xl font-black">{player.displayName}</h2>
+                      {player.isManualWatch ? <span className="rounded-full bg-sky-300 px-3 py-1 text-xs font-black text-sky-950">Manual watch</span> : null}
                       {player.isTaken ? <span className="rounded-full bg-rose-300 px-3 py-1 text-xs font-black text-rose-950">Taken / kept</span> : null}
                       {crossed && !player.isTaken ? <span className="rounded-full bg-rose-300 px-3 py-1 text-xs font-black text-rose-950">Crossed off</span> : null}
                       {watched ? <span className="rounded-full bg-sky-300 px-3 py-1 text-xs font-black text-sky-950">Watch</span> : null}
@@ -377,9 +513,15 @@ export function MagicDraftAssistant({
                   </div>
 
                   <div className="flex shrink-0 flex-wrap gap-2">
-                    <button className="rounded-full border border-white/10 px-3 py-2 text-xs font-bold text-slate-200" onClick={() => setWatchlist(toggleValue(watchlist, player.id))} type="button">
-                      {watched ? "Unwatch" : "Watch"}
-                    </button>
+                    {player.isManualWatch ? (
+                      <button className="rounded-full border border-white/10 px-3 py-2 text-xs font-bold text-slate-200" onClick={() => setManualWatchEntries(manualWatchEntries.filter((entry) => entry.id !== player.id))} type="button">
+                        Remove
+                      </button>
+                    ) : (
+                      <button className="rounded-full border border-white/10 px-3 py-2 text-xs font-bold text-slate-200" onClick={() => setWatchlist(toggleValue(watchlist, player.id))} type="button">
+                        {watched ? "Unwatch" : "Watch"}
+                      </button>
+                    )}
                     <button className="rounded-full border border-white/10 px-3 py-2 text-xs font-bold text-slate-200" onClick={() => setDoNotDraft(toggleValue(doNotDraft, player.id))} type="button">
                       {dnd ? "Allow" : "DND"}
                     </button>
