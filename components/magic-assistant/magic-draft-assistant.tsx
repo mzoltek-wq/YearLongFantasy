@@ -80,6 +80,7 @@ const positionGroups: Record<Sport, Array<[string, string]>> = {
   ],
   FOOTBALL: [
     ["ALL", "All"],
+    ["FLEX", "Flex"],
     ["QB", "QB"],
     ["RB", "RB"],
     ["WR", "WR"],
@@ -145,6 +146,18 @@ function formatTaken(taken: TakenPlayer | null) {
   return `${verb}${manager}${pick}${round}`;
 }
 
+function matchesPositionGroup(player: AssistantPlayer, selectedGroup: string) {
+  if (selectedGroup === "ALL") {
+    return true;
+  }
+
+  if (player.sport === "FOOTBALL" && selectedGroup === "FLEX") {
+    return ["RB", "WR", "TE"].includes(player.positionGroup ?? "");
+  }
+
+  return player.positionGroup === selectedGroup;
+}
+
 export function MagicDraftAssistant({
   storageKeyPrefix = "magic-assistant",
   eyebrow = "Zoltek's magic draft assistant",
@@ -195,7 +208,7 @@ export function MagicDraftAssistant({
     const normalizedQuery = query.trim().toLowerCase();
     return (state?.players ?? [])
       .filter((player) => player.sport === sport && player.boardType === boardType)
-      .filter((player) => positionGroup === "ALL" || player.positionGroup === positionGroup)
+      .filter((player) => matchesPositionGroup(player, positionGroup))
       .filter((player) => {
         if (!normalizedQuery) {
           return true;
