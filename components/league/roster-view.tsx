@@ -7,14 +7,21 @@ import { SPORT_EMOJIS, SPORT_LABELS, SPORTS } from "@/lib/constants/league";
 import type { LeagueSnapshot } from "@/lib/types/draft";
 
 type RosterSort = "name" | "draft";
+type RosterScope = "keepers" | "all";
 
 export function RosterView({ snapshot }: { snapshot: LeagueSnapshot }) {
   const [selectedOwnerId, setSelectedOwnerId] = useState(snapshot.owners[0]?.id ?? "");
   const [selectedSport, setSelectedSport] = useState<Sport>(SPORTS[0]);
   const [rosterSort, setRosterSort] = useState<RosterSort>("name");
+  const [rosterScope, setRosterScope] = useState<RosterScope>("keepers");
   const selectedOwner = snapshot.owners.find((owner) => owner.id === selectedOwnerId);
   const selectedRoster = snapshot.slots
-    .filter((slot) => slot.currentOwnerId === selectedOwnerId && slot.selectedSport === selectedSport && slot.selectedPlayerName)
+    .filter((slot) => {
+      const matchesOwnerAndSport = slot.currentOwnerId === selectedOwnerId && slot.selectedSport === selectedSport && slot.selectedPlayerName;
+      const matchesScope = rosterScope === "all" || slot.isKeeper;
+
+      return matchesOwnerAndSport && matchesScope;
+    })
     .sort((left, right) => {
       if (rosterSort === "draft") {
         return left.overallPickNumber - right.overallPickNumber;
@@ -32,11 +39,12 @@ export function RosterView({ snapshot }: { snapshot: LeagueSnapshot }) {
           <p className="mt-2 text-sm text-[var(--muted)]">Pick an owner and sport, then sort alphabetically or by draft slot for ESPN entry.</p>
         </div>
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-strong)] px-4 py-3 text-sm font-semibold">
-          {selectedRoster.length} player{selectedRoster.length === 1 ? "" : "s"}
+          {selectedRoster.length} {rosterScope === "keepers" ? "keeper" : "player"}
+          {selectedRoster.length === 1 ? "" : "s"}
         </div>
       </div>
 
-      <div className="mt-5 grid gap-3 md:grid-cols-3">
+      <div className="mt-5 grid gap-3 md:grid-cols-4">
         <label className="space-y-1">
           <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Owner</span>
           <select className="w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3" onChange={(event) => setSelectedOwnerId(event.target.value)} value={selectedOwnerId}>
@@ -62,6 +70,13 @@ export function RosterView({ snapshot }: { snapshot: LeagueSnapshot }) {
           <select className="w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3" onChange={(event) => setRosterSort(event.target.value as RosterSort)} value={rosterSort}>
             <option value="name">Player name A-Z</option>
             <option value="draft">Draft spot</option>
+          </select>
+        </label>
+        <label className="space-y-1">
+          <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">View</span>
+          <select className="w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3" onChange={(event) => setRosterScope(event.target.value as RosterScope)} value={rosterScope}>
+            <option value="keepers">Keepers only</option>
+            <option value="all">All selected players</option>
           </select>
         </label>
       </div>

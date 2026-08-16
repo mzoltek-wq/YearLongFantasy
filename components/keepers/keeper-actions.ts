@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { IntegrationType, Owner, Sport } from "@prisma/client";
+import { DraftSelectionType, IntegrationType, KeeperStatus, Owner, Sport } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
 import { DEFAULT_TOTAL_ROUNDS } from "@/lib/constants/league";
@@ -20,6 +20,10 @@ function revalidateKeeperViews() {
 
 function keeperFeedbackPath(status: "success" | "error", message: string) {
   return `/keepers?status=${status}&message=${encodeURIComponent(message)}`;
+}
+
+function normalizePersonKey(value: string) {
+  return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
 }
 
 async function getManualKeeperImportSource() {
@@ -118,6 +122,8 @@ async function applyKeeperEntry({
       },
     }),
   ]);
+
+  return player;
 }
 
 async function applyGridKeeperEntry({
@@ -181,6 +187,36 @@ async function applyGridKeeperEntry({
       },
     }),
   ]);
+
+  return player;
+}
+
+function buildManagerByOwnerId({
+  owners,
+  managers,
+}: {
+  owners: Array<Pick<Owner, "id" | "name" | "code">>;
+  managers: Array<{ id: string; name: string; displayName: string | null; code: string }>;
+}) {
+  const managerByOwnerId = new Map<string, (typeof managers)[number]>();
+
+  for (const owner of owners) {
+    const ownerNameKey = normalizePersonKey(owner.name);
+    const manager =
+      managers.find((entry) => entry.code.toUpperCase() === owner.code.toUpperCase()) ??
+      managers.find((entry) => normalizePersonKey(entry.name) === ownerNameKey || normalizePersonKey(entry.displayName ?? "") === ownerNameKey) ??
+      managers.find((entry) => normalizePersonKey(entry.name).startsWith(ownerNameKey) || ownerNameKey.startsWith(normalizePersonKey(entry.name))) ??
+      managers.find((entry) => {
+        const displayKey = normalizePersonKey(entry.displayName ?? "");
+        return Boolean(displayKey) && (displayKey.startsWith(ownerNameKey) || ownerNameKey.startsWith(displayKey));
+      });
+
+    if (manager) {
+      managerByOwnerId.set(owner.id, manager);
+    }
+  }
+
+  return managerByOwnerId;
 }
 
 function getOwnerScopedImportRecordWhere(ownerId: string) {
@@ -438,11 +474,23 @@ export async function importFullKeeperGridText(formData: FormData) {
       throw new Error("Paste the full keeper grid before importing.");
     }
 
-    const [owners, ownerCodes, draftSlots, rosterLimits] = await Promise.all([
+    const [owners, ownerCodes, draftSlots, rosterLimits, latestSeason] = await Promise.all([
       prisma.owner.findMany(),
       prisma.ownerCode.findMany({ include: { owner: true } }),
       prisma.draftSlot.findMany(),
       prisma.rosterLimit.findMany(),
+      prisma.leagueSeason.findFirst({
+        orderBy: { year: "desc" },
+        include: {
+          drafts: {
+            orderBy: { createdAt: "asc" },
+            take: 1,
+          },
+          seasonManagers: {
+            include: { manager: true },
+          },
+        },
+      }),
     ]);
     const ownerByCode = new Map(ownerCodes.map((code) => [code.code.toUpperCase(), code.owner]));
     const { rows, headerIndex, ownerColumns, interpretations } = interpretFullKeeperGrid(input, owners, ownerByCode);
@@ -490,6 +538,26 @@ export async function importFullKeeperGridText(formData: FormData) {
 
     const slotByRoundAndDefaultOwner = new Map(activeDraftSlots.map((slot) => [`${slot.round}:${slot.defaultOwnerId}`, slot]));
     const source = await getManualKeeperImportSource();
+    const latestDraft = latestSeason?.drafts[0] ?? null;
+    const managerByOwnerId =
+      latestSeason && latestDraft
+        ? buildManagerByOwnerId({
+            owners,
+            managers: latestSeason.seasonManagers.map((entry) => entry.manager),
+          })
+        : new Map<string, { id: string; name: string; displayName: string | null; code: string }>();
+    const draftGridSlots =
+      latestDraft && managerByOwnerId.size > 0
+        ? await prisma.draftGridSlot.findMany({
+            where: { draftId: latestDraft.id },
+            select: {
+              id: true,
+              round: true,
+              originalManagerId: true,
+            },
+          })
+        : [];
+    const draftGridSlotByRoundAndOriginalManager = new Map(draftGridSlots.map((slot) => [`${slot.round}:${slot.originalManagerId}`, slot]));
     const issues: Array<{ owner: Owner; entry: ParsedKeeperTextEntry; reason: string }> = [];
     const seenPlayerNames = new Set<string>();
     const importedCountByOwnerId = new Map<string, number>();
@@ -551,6 +619,22 @@ export async function importFullKeeperGridText(formData: FormData) {
       );
     }
 
+    if (latestDraft) {
+      await prisma.$executeRaw`
+        UPDATE "DraftGridSlot"
+        SET "currentManagerId" = "originalManagerId",
+            "playerId" = NULL,
+            "playerName" = NULL,
+            "sport" = NULL,
+            "selectionType" = ${DraftSelectionType.OPEN}::"DraftSelectionType",
+            "keeperStatus" = NULL,
+            "rawCellValue" = NULL,
+            "selectedAt" = NULL,
+            "updatedAt" = NOW()
+        WHERE "draftId" = ${latestDraft.id}
+      `;
+    }
+
     const keeperInterpretations = interpretations.filter((interpretation) => interpretation.type === "keeper" && interpretation.entry);
     const rawPlayerNames = keeperInterpretations.map((interpretation) => interpretation.entry!.playerName);
 
@@ -602,12 +686,27 @@ export async function importFullKeeperGridText(formData: FormData) {
       }
 
       const appliedOverrideCode = interpretation.currentOwner.id === interpretation.originalPickOwner.id ? null : interpretation.currentOwner.code;
+      const originalManager = managerByOwnerId.get(interpretation.originalPickOwner.id);
+      const currentManager = managerByOwnerId.get(interpretation.currentOwner.id);
+      const draftGridSlot =
+        originalManager && currentManager ? draftGridSlotByRoundAndOriginalManager.get(`${interpretation.round}:${originalManager.id}`) : null;
+
       if (appliedOverrideCode) {
         await prisma.draftSlot.update({
           where: { id: slot.id },
           data: {
             currentOwnerId: interpretation.currentOwner.id,
             overrideOwnerCode: appliedOverrideCode,
+          },
+        });
+      }
+
+      if (draftGridSlot && currentManager) {
+        await prisma.draftGridSlot.update({
+          where: { id: draftGridSlot.id },
+          data: {
+            currentManagerId: currentManager.id,
+            rawCellValue: interpretation.rawValue,
           },
         });
       }
@@ -671,7 +770,22 @@ export async function importFullKeeperGridText(formData: FormData) {
       }
 
       try {
-        await applyGridKeeperEntry({ slotId: slot.id, owner: interpretation.currentOwner as Owner, overrideOwnerCode: appliedOverrideCode, entry, sport });
+        const player = await applyGridKeeperEntry({ slotId: slot.id, owner: interpretation.currentOwner as Owner, overrideOwnerCode: appliedOverrideCode, entry, sport });
+        if (draftGridSlot && currentManager) {
+          await prisma.draftGridSlot.update({
+            where: { id: draftGridSlot.id },
+            data: {
+              currentManagerId: currentManager.id,
+              playerId: player.id,
+              playerName: player.displayName,
+              sport,
+              selectionType: DraftSelectionType.KEEPER,
+              keeperStatus: entry.keeperTag as KeeperStatus,
+              rawCellValue: interpretation.rawValue,
+              selectedAt: new Date(),
+            },
+          });
+        }
         importedCountByOwnerId.set(interpretation.currentOwner.id, (importedCountByOwnerId.get(interpretation.currentOwner.id) ?? 0) + 1);
         placementSamples.push({
           playerName: entry.playerName,
@@ -842,6 +956,9 @@ export async function importFullKeeperGridText(formData: FormData) {
     });
 
     revalidateKeeperViews();
+    if (latestSeason) {
+      revalidatePath(`/league/${latestSeason.year}/grid`);
+    }
     const reasonSummary =
       topIssueReasons.length > 0
         ? ` Top issues: ${topIssueReasons

@@ -38,6 +38,10 @@ The next-generation league model is being added alongside the original working d
 - `TransactionFeeRule` and `TransactionFee` support add/trade fee settings and season fee totals.
 - `/league/2026/grid` is the first read-only v2 page.
 
+## Near-Term Notes
+
+- Add roster-progress status to the mobile draft tracker so people can see each owner's total and per-sport counts without opening the full commissioner draft page.
+
 ## Local Setup
 
 1. Copy `.env.example` to `.env`.
