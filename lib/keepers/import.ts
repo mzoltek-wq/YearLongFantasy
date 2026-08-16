@@ -5,7 +5,7 @@ import { parseSportFromValue, stripPlayerDecorators } from "@/lib/utils/draft";
 
 const OWNER_CODE_SET = new Set<string>(Object.values(OWNER_CODES));
 const TOKEN_REGEX = /\(([^)]+)\)/g;
-const KEEPER_TAG_REGEX = /^K[1-4]?$/i;
+const KEEPER_TAG_REGEX = /^(K[1-4]?|FT)$/i;
 
 export type ParsedKeeperTextEntry = {
   round: number;
@@ -31,7 +31,7 @@ function splitKeeperValues(value: string) {
 function parseKeeperValue(round: number, rawValue: string): ParsedKeeperTextEntry {
   const tokens = getTokens(rawValue);
   const rawKeeperTag = tokens.find((token) => KEEPER_TAG_REGEX.test(token)) ?? null;
-  const keeperTag = rawKeeperTag?.toUpperCase() === "K" ? "K1" : rawKeeperTag;
+  const keeperTag = rawKeeperTag?.toUpperCase() === "K" ? "K1" : rawKeeperTag?.toUpperCase() === "FT" ? "K4" : rawKeeperTag;
   const invalidKeeperTags = tokens.filter((token) => /^K\d+$/i.test(token) && !KEEPER_TAG_REGEX.test(token));
   const pickOwnerCode = tokens.find((token) => OWNER_CODE_SET.has(token)) ?? null;
   const playerName = stripPlayerDecorators(rawValue);

@@ -193,6 +193,28 @@ function getOwnerCodeFromRawValue(rawValue: string, ownerByCode: Map<string, Own
   return null;
 }
 
+function normalizeOwnerHeader(value: string) {
+  return value
+    .replace(/[^a-z0-9]/gi, "")
+    .trim()
+    .toLowerCase();
+}
+
+function resolveOwnerHeaderOwner(value: string, owners: Owner[]) {
+  const normalizedValue = normalizeOwnerHeader(value);
+
+  if (!normalizedValue) {
+    return null;
+  }
+
+  return (
+    owners.find((owner) => normalizeOwnerHeader(owner.name) === normalizedValue) ??
+    owners.find((owner) => normalizedValue.startsWith(normalizeOwnerHeader(owner.name))) ??
+    owners.find((owner) => normalizeOwnerHeader(owner.name).startsWith(normalizedValue)) ??
+    null
+  );
+}
+
 function getOwnerScopedImportRecordWhere(ownerId: string) {
   return {
     recordType: {
@@ -454,17 +476,16 @@ export async function importFullKeeperGridText(formData: FormData) {
       prisma.draftSlot.findMany(),
       prisma.rosterLimit.findMany(),
     ]);
-    const ownerByName = new Map(owners.map((owner) => [owner.name.toLowerCase(), owner]));
     const ownerByCode = new Map(ownerCodes.map((code) => [code.code.toUpperCase(), code.owner]));
     const rows = input.split(/\r?\n/).map((row) => row.split("\t").map((cell) => cell.trim()));
-    const headerIndex = rows.findIndex((row) => row.filter((cell) => ownerByName.has(cell.toLowerCase())).length >= 2);
+    const headerIndex = rows.findIndex((row) => row.filter((cell) => resolveOwnerHeaderOwner(cell, owners)).length >= 2);
 
     if (headerIndex === -1) {
       throw new Error("Could not find an owner header row in the pasted keeper grid.");
     }
 
     const ownerColumns = rows[headerIndex]
-      .map((cell, index) => ({ owner: ownerByName.get(cell.toLowerCase()), index }))
+      .map((cell, index) => ({ owner: resolveOwnerHeaderOwner(cell, owners), index }))
       .filter((entry): entry is { owner: Owner; index: number } => Boolean(entry.owner));
     const rosterTotalRounds = rosterLimits.reduce((total, limit) => total + limit.perOwnerLimit, 0);
     const targetTotalRounds = Math.max(DEFAULT_TOTAL_ROUNDS, rosterTotalRounds);
@@ -612,9 +633,9 @@ export async function importFullKeeperGridText(formData: FormData) {
           continue;
         }
 
-        const pickOwnerCode = getOwnerCodeFromRawValue(rawValue, ownerByCode);
-        const pickOwner = pickOwnerCode ? ownerByCode.get(pickOwnerCode)! : ownerColumn.owner;
-        const currentOwner = ownerColumn.owner;
+        const currentOwnerCode = getOwnerCodeFromRawValue(rawValue, ownerByCode);
+        const pickOwner = ownerColumn.owner;
+        const currentOwner = currentOwnerCode ? ownerByCode.get(currentOwnerCode)! : ownerColumn.owner;
         const appliedOverrideCode = currentOwner.id === pickOwner.id ? null : currentOwner.code;
         const slot = slotByRoundAndDefaultOwner.get(`${round}:${pickOwner.id}`);
         if (!slot) {
@@ -655,7 +676,7 @@ export async function importFullKeeperGridText(formData: FormData) {
             owner: currentOwner,
             entry: {
               ...parsedEntries[0],
-              pickOwnerCode,
+              pickOwnerCode: currentOwnerCode,
             },
             reason: "This grid cell contains multiple players. One draft slot can only hold one keeper.",
           });
@@ -664,7 +685,7 @@ export async function importFullKeeperGridText(formData: FormData) {
 
         const entry = {
           ...parsedEntries[0],
-          pickOwnerCode,
+          pickOwnerCode: currentOwnerCode,
         };
 
         if (!entry.playerName) {
@@ -721,7 +742,7 @@ export async function importFullKeeperGridText(formData: FormData) {
               round,
               originalPickOwner: pickOwner.name,
               assignedOwner: currentOwner.name,
-              ownerCode: pickOwnerCode,
+              ownerCode: currentOwnerCode,
               rawValue,
             });
           }
