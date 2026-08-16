@@ -51,6 +51,7 @@ let currentPositionGroup = "ALL";
 let hideCrossedOff = true;
 let leagueAutoSyncTimer = null;
 let isLeagueSyncing = false;
+let hasTriggeredInitialLeagueSync = false;
 
 const elements = {
   sportTabs: document.querySelector("#sportTabs"),
@@ -100,6 +101,7 @@ async function boot() {
   await loadState();
   bindEvents();
   render();
+  triggerInitialLeagueSync();
 }
 
 async function loadState() {
@@ -589,6 +591,15 @@ function setupLeagueAutoSync() {
   leagueAutoSyncTimer = setInterval(() => {
     syncLeagueUnavailable({ quiet: true });
   }, 5000);
+}
+
+function triggerInitialLeagueSync() {
+  if (hasTriggeredInitialLeagueSync || state.settings.integrations?.leagueAutoSync === false) {
+    return;
+  }
+
+  hasTriggeredInitialLeagueSync = true;
+  syncLeagueUnavailable({ quiet: true });
 }
 
 async function syncLeagueUnavailable({ quiet }) {
