@@ -146,6 +146,7 @@ export function MagicDraftAssistant() {
   const [positionGroup, setPositionGroup] = useState("ALL");
   const [query, setQuery] = useState("");
   const [hideTaken, setHideTaken] = useState(true);
+  const [showWatchOnly, setShowWatchOnly] = useState(false);
   const [watchlist, setWatchlist] = useLocalStringArray("magic-assistant-watchlist");
   const [doNotDraft, setDoNotDraft] = useLocalStringArray("magic-assistant-dnd");
   const [manualCrossedOff, setManualCrossedOff] = useLocalStringArray("magic-assistant-crossed-off");
@@ -193,6 +194,7 @@ export function MagicDraftAssistant() {
           .toLowerCase()
           .includes(normalizedQuery);
       })
+      .filter((player) => !showWatchOnly || watchlist.includes(player.id))
       .filter((player) => normalizedQuery || !hideTaken || (!player.isTaken && !manualCrossedOff.includes(player.id)))
       .sort((left, right) => {
         if (watchlist.includes(left.id) !== watchlist.includes(right.id)) {
@@ -204,7 +206,7 @@ export function MagicDraftAssistant() {
         return (left.rank ?? 999999) - (right.rank ?? 999999);
       })
       .slice(0, 180);
-  }, [boardType, doNotDraft, hideTaken, manualCrossedOff, positionGroup, query, sport, state?.players, watchlist]);
+  }, [boardType, doNotDraft, hideTaken, manualCrossedOff, positionGroup, query, showWatchOnly, sport, state?.players, watchlist]);
 
   const currentBoardPlayers = (state?.players ?? []).filter((player) => player.sport === sport && player.boardType === boardType);
   const takenCount = currentBoardPlayers.filter((player) => player.isTaken || manualCrossedOff.includes(player.id)).length;
@@ -231,10 +233,17 @@ export function MagicDraftAssistant() {
                 <div className="text-2xl font-black">{takenCount}</div>
                 <div className="text-xs uppercase tracking-[0.25em] text-rose-100/80">Taken</div>
               </div>
-              <div className="rounded-2xl bg-sky-400/15 px-4 py-3">
+              <button
+                aria-pressed={showWatchOnly}
+                className={`rounded-2xl px-4 py-3 transition ${
+                  showWatchOnly ? "bg-sky-300 text-slate-950 ring-2 ring-sky-100" : "bg-sky-400/15 text-white hover:bg-sky-400/25"
+                }`}
+                onClick={() => setShowWatchOnly((current) => !current)}
+                type="button"
+              >
                 <div className="text-2xl font-black">{watchlist.length}</div>
-                <div className="text-xs uppercase tracking-[0.25em] text-sky-100/80">Watch</div>
-              </div>
+                <div className={`text-xs uppercase tracking-[0.25em] ${showWatchOnly ? "text-slate-800" : "text-sky-100/80"}`}>Watch</div>
+              </button>
             </div>
           </div>
         </header>
@@ -293,6 +302,11 @@ export function MagicDraftAssistant() {
               <input checked={hideTaken} onChange={(event) => setHideTaken(event.target.checked)} type="checkbox" />
               Hide taken
             </label>
+            {showWatchOnly ? (
+              <button className="rounded-2xl border border-sky-200/40 bg-sky-300/15 px-4 py-3 text-sm font-black text-sky-100" onClick={() => setShowWatchOnly(false)} type="button">
+                Showing watchlist
+              </button>
+            ) : null}
             <button className="rounded-2xl bg-white px-4 py-3 text-sm font-black text-slate-950" onClick={() => loadState()} type="button">
               Refresh now
             </button>
