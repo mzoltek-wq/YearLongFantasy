@@ -2,7 +2,7 @@ import { DraftSelectionType, DraftSlot, Prisma, Sport } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
 import { pushDraftPickWriteback } from "@/lib/import/google-sheets";
-import { buildPlayerMetadata, findExistingDraftSelection, resolveDraftPlayer } from "@/lib/players/resolve";
+import { buildPlayerMetadata, findExistingDraftSelection, findSimilarDraftSelection, resolveDraftPlayer } from "@/lib/players/resolve";
 import { DraftSlotWithRelations, KeeperWithRelations, LeagueSnapshot } from "@/lib/types/draft";
 import { normalizePlayerName } from "@/lib/utils/draft";
 import { calculateRosterTotals, getCurrentDraftWindow, validateDraftIntegrity, validateLeagueTotals } from "@/lib/validation/draft";
@@ -128,6 +128,7 @@ async function enforcePlayerAvailability(
   input: {
     playerId?: string | null;
     playerName: string;
+    sport?: Sport | null;
     overallPickNumberToIgnore?: number;
   },
 ) {
@@ -141,6 +142,19 @@ async function enforcePlayerAvailability(
   if (existingSelection) {
     throw new Error(
       `"${existingSelection.playerName}" is already ${existingSelection.isKeeper ? "kept" : "drafted"} by ${existingSelection.ownerName} at pick ${existingSelection.overallPickNumber}.`,
+    );
+  }
+
+  const similarSelection = await findSimilarDraftSelection({
+    playerName: input.playerName,
+    sport: input.sport,
+    overallPickNumberToIgnore: input.overallPickNumberToIgnore,
+    tx,
+  });
+
+  if (similarSelection) {
+    throw new Error(
+      `"${input.playerName}" looks like "${similarSelection.playerName}", already ${similarSelection.isKeeper ? "kept" : "drafted"} by ${similarSelection.ownerName} at pick ${similarSelection.overallPickNumber}. Check the spelling before saving.`,
     );
   }
 }
@@ -245,6 +259,7 @@ export async function makeDraftPick(input: {
     await enforcePlayerAvailability(tx, {
       playerId: duplicate?.id ?? resolution.matchedPlayerId,
       playerName,
+      sport,
     });
 
     const slot = await tx.draftSlot.findUnique({
@@ -334,6 +349,7 @@ export async function updateDraftPick(input: {
     await enforcePlayerAvailability(tx, {
       playerId: duplicatePlayer?.id ?? resolution.matchedPlayerId,
       playerName,
+      sport,
       overallPickNumberToIgnore: input.overallPickNumber,
     });
 

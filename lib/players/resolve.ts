@@ -55,6 +55,10 @@ export type DraftPlayerUnavailableSelection = {
   playerName: string;
 };
 
+export type DraftPlayerSimilarSelection = DraftPlayerUnavailableSelection & {
+  distance: number;
+};
+
 export function cleanDraftPlayerName(rawValue: string) {
   return stripPlayerDecorators(rawValue)
     .replace(SPORT_WORD_REGEX, " ")
@@ -216,6 +220,68 @@ export async function findExistingDraftSelection({
   };
 }
 
+export async function findSimilarDraftSelection({
+  playerName,
+  sport,
+  overallPickNumberToIgnore,
+  tx = prisma,
+}: {
+  playerName: string;
+  sport?: Sport | null;
+  overallPickNumberToIgnore?: number;
+  tx?: Prisma.TransactionClient | typeof prisma;
+}): Promise<DraftPlayerSimilarSelection | null> {
+  const normalizedName = normalizePlayerName(playerName);
+  const slots = await tx.draftSlot.findMany({
+    where: {
+      selectedPlayerName: { not: null },
+      ...(overallPickNumberToIgnore
+        ? {
+            overallPickNumber: { not: overallPickNumberToIgnore },
+          }
+        : {}),
+      ...(sport
+        ? {
+            selectedSport: sport,
+          }
+        : {}),
+    },
+    include: {
+      currentOwner: true,
+    },
+  });
+
+  const candidates = slots
+    .map((slot) => {
+      const selectedPlayerName = slot.selectedPlayerName ?? "";
+      const selectedNormalizedName = normalizePlayerName(selectedPlayerName);
+
+      if (!selectedNormalizedName || selectedNormalizedName === normalizedName) {
+        return null;
+      }
+
+      const distance = playerNameDistance(normalizedName, selectedNormalizedName);
+
+      if (!isLikelySamePlayer(normalizedName, selectedNormalizedName, distance)) {
+        return null;
+      }
+
+      return {
+        overallPickNumber: slot.overallPickNumber,
+        round: slot.round,
+        slotNumber: slot.slotNumber,
+        ownerName: slot.currentOwner.name,
+        isKeeper: slot.isKeeper,
+        playerName: selectedPlayerName,
+        distance,
+      };
+    })
+    .filter((candidate): candidate is DraftPlayerSimilarSelection => Boolean(candidate))
+    .sort((left, right) => left.distance - right.distance || left.overallPickNumber - right.overallPickNumber);
+
+  return candidates[0] ?? null;
+}
+
 export async function resolveDraftPlayerWithRosterWarnings({
   playerName,
   ownerId,
@@ -231,10 +297,22 @@ export async function resolveDraftPlayerWithRosterWarnings({
     normalizedName: normalizePlayerName(resolution.matchedDisplayName ?? resolution.playerName),
     overallPickNumberToIgnore,
   });
+  const similarSelection =
+    unavailableSelection || !resolution.sport
+      ? null
+      : await findSimilarDraftSelection({
+          playerName: resolution.matchedDisplayName ?? resolution.playerName,
+          sport: resolution.sport,
+          overallPickNumberToIgnore,
+        });
   const duplicateWarnings = unavailableSelection
     ? [
         `${unavailableSelection.playerName} is already ${unavailableSelection.isKeeper ? "kept" : "drafted"} by ${unavailableSelection.ownerName} at pick ${unavailableSelection.overallPickNumber}.`,
       ]
+    : similarSelection
+      ? [
+          `${resolution.matchedDisplayName ?? resolution.playerName} looks like ${similarSelection.playerName}, already ${similarSelection.isKeeper ? "kept" : "drafted"} by ${similarSelection.ownerName} at pick ${similarSelection.overallPickNumber}.`,
+        ]
     : [];
 
   if (!resolution.sport) {
@@ -285,6 +363,83 @@ export async function resolveDraftPlayerWithRosterWarnings({
     unavailableSelection,
     rosterWarnings,
   };
+}
+
+function playerNameDistance(left: string, right: string) {
+  const compactLeft = compactPlayerName(left);
+  const compactRight = compactPlayerName(right);
+
+  if (!compactLeft || !compactRight) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return levenshteinDistance(compactLeft, compactRight);
+}
+
+function isLikelySamePlayer(left: string, right: string, distance: number) {
+  const compactLeft = compactPlayerName(left);
+  const compactRight = compactPlayerName(right);
+  const shorterLength = Math.min(compactLeft.length, compactRight.length);
+
+  if (shorterLength < 8) {
+    return distance <= 1;
+  }
+
+  if (distance <= 2 && shorterLength <= 14) {
+    return true;
+  }
+
+  if (distance <= 3 && shorterLength <= 22) {
+    return shareFirstToken(left, right) || lastTokenDistance(left, right) <= 2;
+  }
+
+  return distance <= 4 && shareFirstToken(left, right) && lastTokenDistance(left, right) <= 3;
+}
+
+function compactPlayerName(value: string) {
+  return value.replace(/[^a-z0-9]/gi, "");
+}
+
+function shareFirstToken(left: string, right: string) {
+  return tokenAt(left, 0) !== "" && tokenAt(left, 0) === tokenAt(right, 0);
+}
+
+function lastTokenDistance(left: string, right: string) {
+  const leftLast = tokenAt(left, -1);
+  const rightLast = tokenAt(right, -1);
+
+  if (!leftLast || !rightLast) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return levenshteinDistance(leftLast, rightLast);
+}
+
+function tokenAt(value: string, index: number) {
+  const tokens = value.split(/\s+/).filter(Boolean);
+  return index < 0 ? tokens[tokens.length + index] ?? "" : tokens[index] ?? "";
+}
+
+function levenshteinDistance(left: string, right: string) {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  const current = Array.from({ length: right.length + 1 }, () => 0);
+
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    current[0] = leftIndex;
+
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      const cost = left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1;
+      current[rightIndex] = Math.min(
+        previous[rightIndex] + 1,
+        current[rightIndex - 1] + 1,
+        previous[rightIndex - 1] + cost,
+      );
+    }
+
+    previous.splice(0, previous.length, ...current);
+  }
+
+  return previous[right.length];
 }
 
 export function buildPlayerMetadata({
