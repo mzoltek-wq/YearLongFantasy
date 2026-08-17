@@ -1,21 +1,25 @@
 "use client";
 
 import { Sport } from "@prisma/client";
+import { usePathname } from "next/navigation";
 import { useState } from "react";
 
 import { SPORT_EMOJIS, SPORT_LABELS, SPORTS } from "@/lib/constants/league";
-import { evaluateRosterFit, extractPositionsFromMetadata, getRosterPositionSlots, RosterPlayer, RosterSlotAssignment } from "@/lib/roster/positions";
+import { evaluateRosterFit, extractPositionsFromMetadata, getRosterPositionSlots, POSITION_OPTIONS_BY_SPORT, RosterPlayer, RosterSlotAssignment } from "@/lib/roster/positions";
 import type { LeagueSnapshot } from "@/lib/types/draft";
 import { StatusChip } from "@/components/ui/status-chip";
+import { updateRosterPlayerPositionOverride } from "@/components/league/roster-actions";
 
 type DraftRosterPlayer = RosterPlayer & {
   draftLabel: string;
   isKeeper: boolean;
   overallPickNumber: number;
+  playerId: string | null;
   round: number;
 };
 
-export function RosterView({ snapshot }: { snapshot: LeagueSnapshot }) {
+export function RosterView({ allowPositionOverrides = true, snapshot }: { allowPositionOverrides?: boolean; snapshot: LeagueSnapshot }) {
+  const pathname = usePathname();
   const [selectedOwnerId, setSelectedOwnerId] = useState(snapshot.owners[0]?.id ?? "");
   const [selectedSport, setSelectedSport] = useState<Sport>(SPORTS[0]);
   const selectedOwner = snapshot.owners.find((owner) => owner.id === selectedOwnerId);
@@ -32,6 +36,7 @@ export function RosterView({ snapshot }: { snapshot: LeagueSnapshot }) {
       draftLabel: `${slot.isKeeper ? "Keeper" : "Live pick"} · R${slot.round}.${slot.slotNumber} · Pick ${slot.overallPickNumber}`,
       isKeeper: slot.isKeeper,
       overallPickNumber: slot.overallPickNumber,
+      playerId: slot.selectedPlayer?.id ?? null,
       round: slot.round,
     }));
   const rosterFit = evaluateRosterFit(selectedSport, selectedRoster, rosterLimit);
@@ -179,6 +184,27 @@ export function RosterView({ snapshot }: { snapshot: LeagueSnapshot }) {
                           {player.positions.length > 0 ? `Positions: ${player.positions.join(", ")}` : "Missing ESPN position eligibility."}
                         </p>
                         <p className="mt-1 text-xs text-amber-900">{player.draftLabel}</p>
+                        {allowPositionOverrides && player.playerId ? (
+                          <form action={updateRosterPlayerPositionOverride} className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+                            <input name="playerId" type="hidden" value={player.playerId} />
+                            <input name="returnTo" type="hidden" value={pathname} />
+                            <input
+                              className="min-w-0 rounded-full border border-amber-200 bg-white px-3 py-2 text-sm outline-none ring-amber-300/40 focus:ring-4"
+                              defaultValue={player.positions.join(", ")}
+                              name="positions"
+                              placeholder={`Set positions, like ${POSITION_OPTIONS_BY_SPORT[selectedSport].join(", ")}`}
+                            />
+                            <button className="rounded-full bg-amber-900 px-4 py-2 text-sm font-semibold text-white" type="submit">
+                              Save positions
+                            </button>
+                            <p className="text-xs text-amber-900 sm:col-span-2">Valid: {POSITION_OPTIONS_BY_SPORT[selectedSport].join(", ")}</p>
+                          </form>
+                        ) : null}
+                        {allowPositionOverrides && !player.playerId ? (
+                          <p className="mt-3 rounded-xl bg-white px-3 py-2 text-xs text-amber-900">
+                            This player is not linked to a database player yet. Add or match the player on the Players tab first.
+                          </p>
+                        ) : null}
                       </div>
                     ))}
                   </div>

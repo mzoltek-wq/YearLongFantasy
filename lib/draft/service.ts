@@ -1,8 +1,9 @@
-import { DraftSelectionType, DraftSlot, Prisma, Sport } from "@prisma/client";
+import { DraftSelectionType, DraftSlot, Player, Prisma, Sport } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
 import { pushDraftPickWriteback } from "@/lib/import/google-sheets";
 import { buildPlayerMetadata, findExistingDraftSelection, findSimilarDraftSelection, resolveDraftPlayer } from "@/lib/players/resolve";
+import { extractPositionsFromMetadata } from "@/lib/roster/positions";
 import { DraftSlotWithRelations, KeeperWithRelations, LeagueSnapshot } from "@/lib/types/draft";
 import { normalizePlayerName } from "@/lib/utils/draft";
 import { calculateRosterTotals, getCurrentDraftWindow, validateDraftIntegrity, validateLeagueTotals } from "@/lib/validation/draft";
@@ -34,7 +35,7 @@ export async function getLeagueSnapshot(): Promise<LeagueSnapshot> {
     prisma.leagueSettings.findFirstOrThrow(),
   ]);
 
-  const slots = rawSlots as DraftSlotWithRelations[];
+  const slots = await enrichDraftSlotsWithCurrentPlayerEligibility(rawSlots as DraftSlotWithRelations[]);
   const ownerTotals = calculateRosterTotals({
     owners,
     slots,
@@ -61,6 +62,144 @@ export async function getLeagueSnapshot(): Promise<LeagueSnapshot> {
     draftIntegrity,
     draftWindow,
   };
+}
+
+function slotHasPositionEligibility(slot: DraftSlotWithRelations) {
+  if (!slot.selectedSport || !slot.selectedPlayer) {
+    return false;
+  }
+
+  return extractPositionsFromMetadata(slot.selectedSport, slot.selectedPlayer.metadata).length > 0;
+}
+
+async function enrichDraftSlotsWithCurrentPlayerEligibility(slots: DraftSlotWithRelations[]) {
+  const slotsNeedingPlayerEligibility = slots.filter((slot) => slot.selectedPlayerName && slot.selectedSport && !slotHasPositionEligibility(slot));
+
+  if (slotsNeedingPlayerEligibility.length === 0) {
+    return slots;
+  }
+
+  const normalizedNames = Array.from(new Set(slotsNeedingPlayerEligibility.map((slot) => normalizePlayerName(slot.selectedPlayerName ?? "")).filter(Boolean)));
+  const exactPlayers = await prisma.player.findMany({
+    where: {
+      normalizedName: {
+        in: normalizedNames,
+      },
+    },
+  });
+  const exactPlayerByKey = new Map(
+    exactPlayers
+      .filter((player) => extractPositionsFromMetadata(player.sport, player.metadata).length > 0)
+      .map((player) => [`${player.sport}:${player.normalizedName}`, player]),
+  );
+  const enrichedSlots = slots.map((slot) => {
+    if (!slot.selectedPlayerName || !slot.selectedSport || slotHasPositionEligibility(slot)) {
+      return slot;
+    }
+
+    const exactPlayer = exactPlayerByKey.get(`${slot.selectedSport}:${normalizePlayerName(slot.selectedPlayerName)}`);
+    return exactPlayer ? { ...slot, selectedPlayer: exactPlayer } : slot;
+  });
+  const fuzzyTargets = enrichedSlots.filter((slot) => slot.selectedPlayerName && slot.selectedSport && !slotHasPositionEligibility(slot));
+  const fuzzyPlayersByKey = new Map<string, Player | null>();
+
+  await Promise.all(
+    fuzzyTargets.map(async (slot) => {
+      const normalizedName = normalizePlayerName(slot.selectedPlayerName ?? "");
+      const key = `${slot.selectedSport}:${normalizedName}`;
+
+      if (fuzzyPlayersByKey.has(key)) {
+        return;
+      }
+
+      const lastToken = normalizedName.split(/\s+/).filter(Boolean).at(-1);
+      if (!lastToken || lastToken.length < 4) {
+        fuzzyPlayersByKey.set(key, null);
+        return;
+      }
+
+      const candidates = await prisma.player.findMany({
+        where: {
+          sport: slot.selectedSport!,
+          normalizedName: {
+            contains: lastToken,
+          },
+        },
+        take: 25,
+      });
+      const match =
+        candidates
+          .filter((player) => extractPositionsFromMetadata(player.sport, player.metadata).length > 0)
+          .map((player) => ({
+            player,
+            distance: playerNameDistance(normalizedName, player.normalizedName),
+          }))
+          .filter((candidate) => isLikelySamePlayerName(normalizedName, candidate.player.normalizedName, candidate.distance))
+          .sort((left, right) => left.distance - right.distance)[0]?.player ?? null;
+
+      fuzzyPlayersByKey.set(key, match);
+    }),
+  );
+
+  return enrichedSlots.map((slot) => {
+    if (!slot.selectedPlayerName || !slot.selectedSport || slotHasPositionEligibility(slot)) {
+      return slot;
+    }
+
+    const match = fuzzyPlayersByKey.get(`${slot.selectedSport}:${normalizePlayerName(slot.selectedPlayerName)}`);
+    return match ? { ...slot, selectedPlayer: match } : slot;
+  });
+}
+
+function playerNameDistance(left: string, right: string) {
+  return levenshteinDistance(compactPlayerName(left), compactPlayerName(right));
+}
+
+function isLikelySamePlayerName(left: string, right: string, distance: number) {
+  const shorterLength = Math.min(compactPlayerName(left).length, compactPlayerName(right).length);
+
+  if (shorterLength < 8) {
+    return distance <= 1;
+  }
+
+  if (distance <= 2 && shorterLength <= 14) {
+    return true;
+  }
+
+  return distance <= 3 && lastTokenDistance(left, right) <= 2;
+}
+
+function compactPlayerName(value: string) {
+  return value.replace(/[^a-z0-9]/gi, "");
+}
+
+function lastTokenDistance(left: string, right: string) {
+  const leftLast = left.split(/\s+/).filter(Boolean).at(-1) ?? "";
+  const rightLast = right.split(/\s+/).filter(Boolean).at(-1) ?? "";
+
+  if (!leftLast || !rightLast) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return levenshteinDistance(leftLast, rightLast);
+}
+
+function levenshteinDistance(left: string, right: string) {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  const current = Array.from({ length: right.length + 1 }, () => 0);
+
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    current[0] = leftIndex;
+
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      const cost = left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1;
+      current[rightIndex] = Math.min(previous[rightIndex] + 1, current[rightIndex - 1] + 1, previous[rightIndex - 1] + cost);
+    }
+
+    previous.splice(0, previous.length, ...current);
+  }
+
+  return previous[right.length];
 }
 
 async function upsertPlayer(tx: Prisma.TransactionClient, displayName: string, sport: Sport, metadata?: Prisma.InputJsonValue) {

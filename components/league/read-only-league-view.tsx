@@ -123,7 +123,7 @@ export function ReadOnlyLeagueView({ draftSnapshot, draftHistory }: ReadOnlyLeag
           />
         ) : null}
         {displayedTab === "grid" ? <DraftHistoryGrid {...liveDraftHistory} variant="compact" /> : null}
-        {displayedTab === "rosters" ? <RosterView snapshot={liveDraftSnapshot} /> : null}
+        {displayedTab === "rosters" ? <RosterView allowPositionOverrides={false} snapshot={liveDraftSnapshot} /> : null}
         {displayedTab === "standings" ? (
           <div className="rounded-[2rem] border border-[var(--border)] bg-[var(--surface)] p-5 shadow-sm">
             <p className="text-xs uppercase tracking-[0.3em] text-[var(--muted)]">Standings</p>
