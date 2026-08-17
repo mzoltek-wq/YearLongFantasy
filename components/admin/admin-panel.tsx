@@ -5,6 +5,7 @@ import {
   restoreStart2026DraftStateSnapshot,
   saveKeeperGoogleSheetSource,
   saveStart2026DraftStateSnapshot,
+  swapDraftPickOwnership,
   syncKeeperGoogleSheetSourceFromForm,
   updateOwnerName,
   updateRosterLimits,
@@ -40,6 +41,7 @@ export async function AdminPanel({
     }),
   ]);
   const currentYear = new Date().getFullYear();
+  const openDraftPicks = snapshot.slots.filter((slot) => !slot.selectedPlayerName);
 
   return (
     <div className="space-y-6">
@@ -212,6 +214,71 @@ export async function AdminPanel({
         </Card>
 
         <Card>
+          <h2 className="text-xl font-semibold">Mid-draft pick swap</h2>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            Swap ownership of two unused picks after a trade. This is intentionally 1-for-1 for now and will fail if either pick has already been used.
+          </p>
+
+          <form action={swapDraftPickOwnership} className="mt-4 space-y-4">
+            <div className="grid gap-3 md:grid-cols-[1fr_0.7fr]">
+              <label className="block space-y-1">
+                <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Owner giving pick</span>
+                <select className="w-full rounded-xl border border-[var(--border)] px-3 py-2" name="leftOwnerId">
+                  {snapshot.owners.map((owner) => (
+                    <option key={owner.id} value={owner.id}>
+                      {owner.name} ({owner.code})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block space-y-1">
+                <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Pick #</span>
+                <input className="w-full rounded-xl border border-[var(--border)] px-3 py-2" name="leftPickNumber" placeholder="20" type="number" />
+              </label>
+            </div>
+
+            <div className="rounded-2xl border border-dashed border-[var(--border)] px-4 py-3 text-center text-xs font-semibold uppercase tracking-[0.24em] text-[var(--muted)]">
+              swaps with
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-[1fr_0.7fr]">
+              <label className="block space-y-1">
+                <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Owner giving pick</span>
+                <select className="w-full rounded-xl border border-[var(--border)] px-3 py-2" name="rightOwnerId">
+                  {snapshot.owners.map((owner) => (
+                    <option key={owner.id} value={owner.id}>
+                      {owner.name} ({owner.code})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block space-y-1">
+                <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Pick #</span>
+                <input className="w-full rounded-xl border border-[var(--border)] px-3 py-2" name="rightPickNumber" placeholder="53" type="number" />
+              </label>
+            </div>
+
+            <label className="block space-y-1">
+              <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Optional note</span>
+              <input
+                className="w-full rounded-xl border border-[var(--border)] px-3 py-2"
+                name="notes"
+                placeholder="Example: mid-draft trade text or reason"
+                type="text"
+              />
+            </label>
+
+            <button className="rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-white" type="submit">
+              Swap unused picks
+            </button>
+          </form>
+
+          <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--surface-strong)] px-4 py-3 text-sm text-[var(--muted)]">
+            {openDraftPicks.length} picks are currently open. If a pick number is wrong or already belongs to someone else, the swap will be rejected before anything changes.
+          </div>
+        </Card>
+
+        <Card>
           <h2 className="text-xl font-semibold">Owners and codes</h2>
           <p className="mt-2 text-sm text-[var(--muted)]">
             Keep exactly 10 active draft owners for the current league. Edit names here, and add alternate codes when history or traded-pick imports need them.
@@ -271,6 +338,7 @@ export async function AdminPanel({
             </button>
           </form>
         </Card>
+
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">

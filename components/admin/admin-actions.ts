@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { IntegrationType, Sport } from "@prisma/client";
+import { IntegrationType, PickChangeSource, Prisma, Sport } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
 import {
@@ -18,6 +18,7 @@ import { normalizePlayerName } from "@/lib/utils/draft";
 
 const DRAFT_STATE_SNAPSHOT_SOURCE_ID = "draft-state-snapshot-source";
 const START_2026_SNAPSHOT_KEY = "draft-state-snapshot:start-2026";
+const CURRENT_DRAFT_GRID_YEAR = 2026;
 
 function revalidateAdminViews() {
   ["/admin", "/draft", "/dashboard", "/owners", "/keepers", "/tracker", "/league-view", "/rosters", "/league/2026/grid"].forEach((path) => revalidatePath(path));
@@ -40,8 +41,226 @@ async function getDraftStateSnapshotSource() {
   });
 }
 
+function normalizePersonKey(value: string) {
+  return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+async function findManagerForOwnerId(tx: Prisma.TransactionClient, ownerId: string) {
+  const owner = await tx.owner.findUnique({
+    where: { id: ownerId },
+  });
+
+  if (!owner) {
+    return null;
+  }
+
+  const managers = await tx.manager.findMany({
+    select: {
+      id: true,
+      name: true,
+      displayName: true,
+      code: true,
+    },
+  });
+  const ownerNameKey = normalizePersonKey(owner.name);
+
+  return (
+    managers.find((manager) => manager.code.toUpperCase() === owner.code.toUpperCase()) ??
+    managers.find((manager) => normalizePersonKey(manager.name) === ownerNameKey || normalizePersonKey(manager.displayName ?? "") === ownerNameKey) ??
+    managers.find((manager) => normalizePersonKey(manager.name).startsWith(ownerNameKey) || ownerNameKey.startsWith(normalizePersonKey(manager.name))) ??
+    managers.find((manager) => {
+      const displayKey = normalizePersonKey(manager.displayName ?? "");
+      return Boolean(displayKey) && (displayKey.startsWith(ownerNameKey) || ownerNameKey.startsWith(displayKey));
+    }) ??
+    null
+  );
+}
+
 function serializeDate(value: Date | null | undefined) {
   return value ? value.toISOString() : null;
+}
+
+export async function swapDraftPickOwnership(formData: FormData) {
+  let redirectPath = "/admin?status=success&message=Draft%20picks%20swapped.";
+
+  try {
+    const leftOwnerId = String(formData.get("leftOwnerId") ?? "");
+    const rightOwnerId = String(formData.get("rightOwnerId") ?? "");
+    const leftPickNumber = Number(formData.get("leftPickNumber"));
+    const rightPickNumber = Number(formData.get("rightPickNumber"));
+    const notes = String(formData.get("notes") ?? "").trim();
+
+    if (!leftOwnerId || !rightOwnerId) {
+      throw new Error("Both owners are required.");
+    }
+
+    if (!Number.isInteger(leftPickNumber) || leftPickNumber <= 0 || !Number.isInteger(rightPickNumber) || rightPickNumber <= 0) {
+      throw new Error("Both pick numbers must be positive whole numbers.");
+    }
+
+    if (leftPickNumber === rightPickNumber) {
+      throw new Error("Pick numbers must be different.");
+    }
+
+    await prisma.$transaction(
+      async (tx) => {
+        const [leftSlot, rightSlot, leftOwner, rightOwner, season] = await Promise.all([
+          tx.draftSlot.findUnique({
+            where: { overallPickNumber: leftPickNumber },
+            include: {
+              currentOwner: true,
+              defaultOwner: true,
+            },
+          }),
+          tx.draftSlot.findUnique({
+            where: { overallPickNumber: rightPickNumber },
+            include: {
+              currentOwner: true,
+              defaultOwner: true,
+            },
+          }),
+          tx.owner.findUnique({ where: { id: leftOwnerId } }),
+          tx.owner.findUnique({ where: { id: rightOwnerId } }),
+          tx.leagueSeason.findFirst({
+            where: { year: CURRENT_DRAFT_GRID_YEAR },
+            include: {
+              drafts: {
+                orderBy: { createdAt: "asc" },
+                take: 1,
+              },
+            },
+          }),
+        ]);
+
+        if (!leftSlot || !rightSlot) {
+          throw new Error("Could not find one of those picks.");
+        }
+
+        if (!leftOwner || !rightOwner) {
+          throw new Error("Could not find one of those owners.");
+        }
+
+        if (leftSlot.currentOwnerId !== leftOwner.id) {
+          throw new Error(`Pick ${leftPickNumber} is currently owned by ${leftSlot.currentOwner.name}, not ${leftOwner.name}.`);
+        }
+
+        if (rightSlot.currentOwnerId !== rightOwner.id) {
+          throw new Error(`Pick ${rightPickNumber} is currently owned by ${rightSlot.currentOwner.name}, not ${rightOwner.name}.`);
+        }
+
+        if (leftSlot.selectedPlayerName || rightSlot.selectedPlayerName) {
+          throw new Error("Only unused/open picks can be swapped. One of those picks is already filled.");
+        }
+
+        const [leftNewOwnerCode, rightNewOwnerCode, leftManager, rightManager] = await Promise.all([
+          tx.ownerCode.findFirst({
+            where: { ownerId: rightOwner.id },
+            orderBy: { createdAt: "asc" },
+          }),
+          tx.ownerCode.findFirst({
+            where: { ownerId: leftOwner.id },
+            orderBy: { createdAt: "asc" },
+          }),
+          findManagerForOwnerId(tx, leftOwner.id),
+          findManagerForOwnerId(tx, rightOwner.id),
+        ]);
+
+        await Promise.all([
+          tx.draftSlot.update({
+            where: { id: leftSlot.id },
+            data: {
+              currentOwnerId: rightOwner.id,
+              overrideOwnerCode: rightOwner.id === leftSlot.defaultOwnerId ? null : (leftNewOwnerCode?.code ?? rightOwner.code),
+            },
+          }),
+          tx.draftSlot.update({
+            where: { id: rightSlot.id },
+            data: {
+              currentOwnerId: leftOwner.id,
+              overrideOwnerCode: leftOwner.id === rightSlot.defaultOwnerId ? null : (rightNewOwnerCode?.code ?? leftOwner.code),
+            },
+          }),
+        ]);
+
+        const draft = season?.drafts[0];
+        const swapNotes =
+          notes ||
+          `Manual mid-draft pick swap: ${leftOwner.name} pick ${leftPickNumber} for ${rightOwner.name} pick ${rightPickNumber}.`;
+
+        if (draft && leftManager && rightManager) {
+          const [leftGridSlot, rightGridSlot] = await Promise.all([
+            tx.draftGridSlot.findUnique({
+              where: {
+                draftId_overallPickNumber: {
+                  draftId: draft.id,
+                  overallPickNumber: leftPickNumber,
+                },
+              },
+            }),
+            tx.draftGridSlot.findUnique({
+              where: {
+                draftId_overallPickNumber: {
+                  draftId: draft.id,
+                  overallPickNumber: rightPickNumber,
+                },
+              },
+            }),
+          ]);
+
+          if (leftGridSlot && rightGridSlot) {
+            await Promise.all([
+              tx.draftGridSlot.update({
+                where: { id: leftGridSlot.id },
+                data: {
+                  currentManagerId: rightManager.id,
+                  notes: [leftGridSlot.notes, swapNotes].filter(Boolean).join("\n"),
+                },
+              }),
+              tx.draftGridSlot.update({
+                where: { id: rightGridSlot.id },
+                data: {
+                  currentManagerId: leftManager.id,
+                  notes: [rightGridSlot.notes, swapNotes].filter(Boolean).join("\n"),
+                },
+              }),
+              tx.pickOwnershipChange.createMany({
+                data: [
+                  {
+                    seasonId: season.id,
+                    draftGridSlotId: leftGridSlot.id,
+                    fromManagerId: leftManager.id,
+                    toManagerId: rightManager.id,
+                    source: PickChangeSource.MANUAL,
+                    notes: swapNotes,
+                    approvedAt: new Date(),
+                  },
+                  {
+                    seasonId: season.id,
+                    draftGridSlotId: rightGridSlot.id,
+                    fromManagerId: rightManager.id,
+                    toManagerId: leftManager.id,
+                    source: PickChangeSource.MANUAL,
+                    notes: swapNotes,
+                    approvedAt: new Date(),
+                  },
+                ],
+              }),
+            ]);
+          }
+        }
+      },
+      {
+        maxWait: 10000,
+        timeout: 20000,
+      },
+    );
+
+    revalidateAdminViews();
+  } catch (error) {
+    redirectPath = `/admin?status=error&message=${encodeURIComponent(error instanceof Error ? error.message : "Could not swap draft picks.")}`;
+  }
+
+  redirect(redirectPath);
 }
 
 export async function updateRosterLimits(formData: FormData) {
