@@ -138,6 +138,23 @@ function useLocalStringArray(key: string) {
   return [values, update] as const;
 }
 
+function useLocalString(key: string) {
+  const [value, setValue] = useState(() => {
+    if (typeof window === "undefined") {
+      return "";
+    }
+
+    return window.localStorage.getItem(key) ?? "";
+  });
+
+  function update(nextValue: string) {
+    setValue(nextValue);
+    window.localStorage.setItem(key, nextValue);
+  }
+
+  return [value, update] as const;
+}
+
 function useLocalManualWatchEntries(key: string) {
   const [values, setValues] = useState<ManualWatchEntry[]>(() => {
     if (typeof window === "undefined") {
@@ -218,12 +235,14 @@ export function MagicDraftAssistant({
   const [query, setQuery] = useState("");
   const [hideTaken, setHideTaken] = useState(true);
   const [showWatchOnly, setShowWatchOnly] = useState(false);
+  const [showNotes, setShowNotes] = useState(false);
   const [manualWatchName, setManualWatchName] = useState("");
   const [manualWatchSport, setManualWatchSport] = useState<Sport>("FOOTBALL");
   const [watchlist, setWatchlist] = useLocalStringArray(`${storageKeyPrefix}-watchlist`);
   const [doNotDraft, setDoNotDraft] = useLocalStringArray(`${storageKeyPrefix}-dnd`);
   const [manualCrossedOff, setManualCrossedOff] = useLocalStringArray(`${storageKeyPrefix}-crossed-off`);
   const [manualWatchEntries, setManualWatchEntries] = useLocalManualWatchEntries(`${storageKeyPrefix}-manual-watchlist`);
+  const [draftNotes, setDraftNotes] = useLocalString(`${storageKeyPrefix}-notes`);
 
   function addManualWatchEntry() {
     const displayName = manualWatchName.trim();
@@ -436,10 +455,33 @@ export function MagicDraftAssistant({
                 Showing watchlist
               </button>
             ) : null}
+            <button
+              aria-pressed={showNotes}
+              className={`rounded-2xl px-4 py-3 text-sm font-black ${showNotes ? "bg-amber-200 text-slate-950" : "border border-white/10 bg-white/5 text-slate-200"}`}
+              onClick={() => setShowNotes((current) => !current)}
+              type="button"
+            >
+              Notes
+            </button>
             <button className="rounded-2xl bg-white px-4 py-3 text-sm font-black text-slate-950" onClick={() => loadState()} type="button">
               Refresh now
             </button>
           </div>
+
+          {showNotes ? (
+            <div className="rounded-2xl border border-amber-200/20 bg-amber-200/10 p-3">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <p className="text-sm font-black text-amber-100">Draft notes</p>
+                <p className="text-xs text-amber-100/70">Auto-saved on this device</p>
+              </div>
+              <textarea
+                className="min-h-36 w-full rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm leading-6 text-white outline-none ring-amber-200/30 placeholder:text-slate-500 focus:ring-4"
+                onChange={(event) => setDraftNotes(event.target.value)}
+                placeholder={"Targets, position reminders, little bits of draft goblin math...\nExample: Round 12-18 hunt upside WR/RB. Wait on golf unless value falls."}
+                value={draftNotes}
+              />
+            </div>
+          ) : null}
 
           <form
             className="grid gap-3 rounded-2xl border border-sky-200/20 bg-sky-300/10 p-3 md:grid-cols-[1fr_auto_auto]"
