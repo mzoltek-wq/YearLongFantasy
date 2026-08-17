@@ -89,6 +89,8 @@ export function DraftBoardClient({ initialSnapshot, snapshotOverride, autoRefres
   const activePickNumber = activePick?.overallPickNumber ?? null;
   const takenSelection = playerResolution?.takenSelection ?? playerResolution?.unavailableSelection ?? null;
   const isPlayerUnavailable = Boolean(playerResolution?.isTaken || takenSelection);
+  const generalPlayerWarnings = playerResolution?.warnings ?? [];
+  const rosterConstructionWarnings = playerResolution?.rosterWarnings ?? [];
   const hasPlayerText = playerName.trim().length > 0;
   const needsPlayerValidation = playerName.trim().length >= 2;
   const saveDisabled = !activePick || !hasPlayerText || isResolvingPlayer || isPlayerUnavailable || (needsPlayerValidation && !playerResolution);
@@ -371,14 +373,24 @@ export function DraftBoardClient({ initialSnapshot, snapshotOverride, autoRefres
                   <p className="text-xs text-[var(--muted)]">
                     Source: sport from {playerResolution.sportSource.replace("-", " ")}, positions from {playerResolution.positionSource.replace("-", " ")}.
                   </p>
-                  {[...playerResolution.warnings, ...playerResolution.rosterWarnings].length > 0 ? (
+                  {generalPlayerWarnings.length > 0 ? (
                     <div className={`space-y-1 rounded-xl px-3 py-2 text-xs ${isPlayerUnavailable ? "bg-rose-50 text-rose-900" : "bg-amber-50 text-amber-900"}`}>
-                      {[...playerResolution.warnings, ...playerResolution.rosterWarnings].map((warning) => (
+                      {generalPlayerWarnings.map((warning) => (
                         <p key={warning}>{warning}</p>
                       ))}
                     </div>
-                  ) : (
+                  ) : null}
+                  {rosterConstructionWarnings.length > 0 ? (
+                    <div className="space-y-1 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-900">
+                      {rosterConstructionWarnings.map((warning) => (
+                        <p key={warning}>{warning}</p>
+                      ))}
+                    </div>
+                  ) : null}
+                  {generalPlayerWarnings.length === 0 && rosterConstructionWarnings.length === 0 ? (
                     <p className="rounded-xl bg-emerald-50 px-3 py-2 text-xs text-emerald-800">Looks eligible based on cached player data.</p>
+                  ) : (
+                    null
                   )}
                   {playerResolution.matches.length > 0 ? (
                     <div className="space-y-2 rounded-xl bg-white px-3 py-2">

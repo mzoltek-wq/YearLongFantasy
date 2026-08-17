@@ -15,7 +15,7 @@ import {
 } from "@/lib/utils/draft";
 import { parseKeeperText } from "@/lib/keepers/import";
 import { parsePlayerImportText } from "@/lib/players/import";
-import { evaluateRosterFit, extractPositionsFromMetadata, getRosterPositionSlots, normalizePositions } from "@/lib/roster/positions";
+import { evaluateRosterFit, extractPositionsFromMetadata, getRosterConstructionWarnings, getRosterPositionSlots, normalizePositions } from "@/lib/roster/positions";
 import { parseRosterSlotTemplate } from "@/lib/roster/settings";
 import { calculateRosterTotals, validateLeagueTotals } from "@/lib/validation/draft";
 
@@ -371,4 +371,46 @@ test("basketball metadata preserves plausible power-forward center eligibility",
     }),
     ["PF", "C"],
   );
+});
+
+test("roster construction warnings stay quiet while required slots are still fillable", () => {
+  const fit = evaluateRosterFit(
+    Sport.FOOTBALL,
+    [
+      { id: "qb", name: "QB", sport: Sport.FOOTBALL, positions: ["QB"] },
+      { id: "rb", name: "RB", sport: Sport.FOOTBALL, positions: ["RB"] },
+    ],
+    4,
+    ["QB", "K", "BENCH", "BENCH"],
+  );
+
+  assert.deepEqual(
+    getRosterConstructionWarnings({
+      fit,
+      ownerName: "Jimbo",
+      rosterLabel: "Football",
+      selectedCountAfterPick: 2,
+      rosterLimit: 4,
+    }),
+    [],
+  );
+});
+
+test("roster construction warnings flag full rosters with empty required slots", () => {
+  const fit = evaluateRosterFit(
+    Sport.FOOTBALL,
+    [
+      { id: "qb", name: "QB", sport: Sport.FOOTBALL, positions: ["QB"] },
+      { id: "rb1", name: "RB1", sport: Sport.FOOTBALL, positions: ["RB"] },
+      { id: "rb2", name: "RB2", sport: Sport.FOOTBALL, positions: ["RB"] },
+      { id: "rb3", name: "RB3", sport: Sport.FOOTBALL, positions: ["RB"] },
+    ],
+    4,
+    ["QB", "K", "BENCH", "BENCH"],
+  );
+
+  assert.deepEqual(getRosterConstructionWarnings({ fit, ownerName: "Jimbo", rosterLabel: "Football", selectedCountAfterPick: 4, rosterLimit: 4 }), [
+    "Jimbo's Football roster would be full after this pick, but still missing required slots: 1 K.",
+    "RB3 would not fit any configured Football roster slot.",
+  ]);
 });

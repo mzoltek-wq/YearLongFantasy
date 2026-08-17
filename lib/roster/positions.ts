@@ -46,6 +46,14 @@ export type RosterFitResult = {
   warnings: string[];
 };
 
+export type RosterConstructionWarningInput = {
+  fit: RosterFitResult;
+  ownerName: string;
+  rosterLabel: string;
+  selectedCountAfterPick: number;
+  rosterLimit: number;
+};
+
 export const ROSTER_POSITION_SLOTS: Record<Sport, RosterSlotCode[]> = {
   [Sport.BASEBALL]: [
     "C",
@@ -355,6 +363,37 @@ export function evaluateRosterFit(sport: Sport, players: RosterPlayer[], rosterL
     unassignedPlayers,
     warnings,
   };
+}
+
+export function getRosterConstructionWarnings({
+  fit,
+  ownerName,
+  rosterLabel,
+  selectedCountAfterPick,
+  rosterLimit,
+}: RosterConstructionWarningInput) {
+  const remainingRosterSpots = Math.max(rosterLimit - selectedCountAfterPick, 0);
+  const warnings: string[] = [];
+
+  if (fit.openRequiredSlots.length > remainingRosterSpots) {
+    const missingSlots = summarizeSlots(fit.openRequiredSlots);
+    const remainingText = remainingRosterSpots === 1 ? "1 roster spot" : `${remainingRosterSpots} roster spots`;
+
+    warnings.push(
+      remainingRosterSpots === 0
+        ? `${ownerName}'s ${rosterLabel} roster would be full after this pick, but still missing required slots: ${missingSlots}.`
+        : `${ownerName}'s ${rosterLabel} roster would have only ${remainingText} left after this pick, but still needs ${missingSlots}.`,
+    );
+  }
+
+  const placedPlayerIds = new Set(fit.assignments.map((assignment) => assignment.player?.id).filter(Boolean));
+  const unplacedEligiblePlayers = fit.unassignedPlayers.filter((player) => player.positions.length > 0 && !placedPlayerIds.has(player.id));
+
+  if (remainingRosterSpots === 0 && unplacedEligiblePlayers.length > 0) {
+    warnings.push(`${unplacedEligiblePlayers.map((player) => player.name).join(", ")} would not fit any configured ${rosterLabel} roster slot.`);
+  }
+
+  return warnings;
 }
 
 function slotFlexibilityScore(slot: RosterSlotCode) {

@@ -2,7 +2,7 @@ import { Prisma, Sport } from "@prisma/client";
 
 import { SPORT_LABELS } from "@/lib/constants/league";
 import { prisma } from "@/lib/db/prisma";
-import { extractPositionsFromMetadata, normalizePositions, PositionCode, RosterPlayer, evaluateRosterFit } from "@/lib/roster/positions";
+import { evaluateRosterFit, extractPositionsFromMetadata, getRosterConstructionWarnings, normalizePositions, PositionCode, RosterPlayer } from "@/lib/roster/positions";
 import { getRosterSlotSettings } from "@/lib/roster/settings";
 import { normalizePlayerName, parseSportFromValue, stripPlayerDecorators } from "@/lib/utils/draft";
 
@@ -327,20 +327,29 @@ export async function resolveDraftPlayerWithRosterWarnings({
     };
   }
 
-  const ownerSlots = await prisma.draftSlot.findMany({
-    where: {
-      currentOwnerId: ownerId,
-      selectedPlayerName: { not: null },
-      selectedSport: resolution.sport,
-      ...(overallPickNumberToIgnore
-        ? {
-            overallPickNumber: { not: overallPickNumberToIgnore },
-          }
-        : {}),
-    },
-    include: { selectedPlayer: true },
-    orderBy: { overallPickNumber: "asc" },
-  });
+  const [ownerSlots, owner, rosterLimit] = await Promise.all([
+    prisma.draftSlot.findMany({
+      where: {
+        currentOwnerId: ownerId,
+        selectedPlayerName: { not: null },
+        selectedSport: resolution.sport,
+        ...(overallPickNumberToIgnore
+          ? {
+              overallPickNumber: { not: overallPickNumberToIgnore },
+            }
+          : {}),
+      },
+      include: { selectedPlayer: true },
+      orderBy: { overallPickNumber: "asc" },
+    }),
+    prisma.owner.findUnique({
+      where: { id: ownerId },
+      select: { name: true },
+    }),
+    prisma.rosterLimit.findUnique({
+      where: { sport: resolution.sport },
+    }),
+  ]);
   const existingRosterPlayers: RosterPlayer[] = ownerSlots.map((slot) => ({
     id: slot.id,
     name: slot.selectedPlayerName ?? "Unknown player",
@@ -354,8 +363,17 @@ export async function resolveDraftPlayerWithRosterWarnings({
     positions: resolution.positions,
   };
   const rosterSlotSettings = await getRosterSlotSettings();
-  const fit = evaluateRosterFit(resolution.sport, [...existingRosterPlayers, candidateRosterPlayer], null, rosterSlotSettings[resolution.sport]);
-  const rosterWarnings = fit.warnings.map((warning) => `${SPORT_LABELS[resolution.sport!]} roster warning: ${warning}`);
+  const selectedCountAfterPick = existingRosterPlayers.length + 1;
+  const fit = evaluateRosterFit(resolution.sport, [...existingRosterPlayers, candidateRosterPlayer], rosterLimit?.perOwnerLimit ?? null, rosterSlotSettings[resolution.sport]);
+  const rosterWarnings = rosterLimit
+    ? getRosterConstructionWarnings({
+        fit,
+        ownerName: owner?.name ?? "This owner",
+        rosterLabel: SPORT_LABELS[resolution.sport!],
+        selectedCountAfterPick,
+        rosterLimit: rosterLimit.perOwnerLimit,
+      })
+    : [];
 
   return {
     ...resolution,
