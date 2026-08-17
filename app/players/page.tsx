@@ -1,8 +1,9 @@
 import { Card } from "@/components/ui/card";
-import { clearPlayerPositionOverride, importEspnPlayers, importPlayersText, updatePlayerPositionOverride } from "@/components/players/player-actions";
+import { addManualPlayer, clearPlayerPositionOverride, importEspnPlayers, importPlayersText, updatePlayerPositionOverride } from "@/components/players/player-actions";
 import { PlayerBrowser, PlayerBrowserRow } from "@/components/players/player-browser";
 import { prisma } from "@/lib/db/prisma";
-import { extractPositionsFromMetadata } from "@/lib/roster/positions";
+import { SPORT_EMOJIS, SPORT_LABELS, SPORTS } from "@/lib/constants/league";
+import { extractPositionsFromMetadata, POSITION_OPTIONS_BY_SPORT } from "@/lib/roster/positions";
 
 export const dynamic = "force-dynamic";
 
@@ -60,7 +61,40 @@ export default async function PlayersPage({ searchParams }: PlayersPageProps) {
         </div>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Card>
+          <h2 className="text-xl font-semibold">Add manual player</h2>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            Use this for missing players or bad ESPN imports. ESPN ID can stay blank; source will be saved as Manual.
+          </p>
+          <form action={addManualPlayer} className="mt-4 space-y-3">
+            <label className="space-y-1 text-sm">
+              <span className="font-medium">Player name</span>
+              <input className="w-full rounded-2xl border border-[var(--border)] px-4 py-3" name="displayName" placeholder="Kyler Murray" />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="font-medium">Sport</span>
+              <select className="w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3" name="sport">
+                {SPORTS.map((sport) => (
+                  <option key={sport} value={sport}>
+                    {SPORT_EMOJIS[sport]} {SPORT_LABELS[sport]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="font-medium">Position(s)</span>
+              <input className="w-full rounded-2xl border border-[var(--border)] px-4 py-3" name="positions" placeholder="QB or RB, WR" />
+            </label>
+            <p className="text-xs text-[var(--muted)]">
+              Valid examples: Football {POSITION_OPTIONS_BY_SPORT.FOOTBALL.join(", ")}; Baseball {POSITION_OPTIONS_BY_SPORT.BASEBALL.join(", ")}.
+            </p>
+            <button className="rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-white" type="submit">
+              Save manual player
+            </button>
+          </form>
+        </Card>
+
         <Card>
           <h2 className="text-xl font-semibold">Import from ESPN public endpoint</h2>
           <p className="mt-2 text-sm text-[var(--muted)]">

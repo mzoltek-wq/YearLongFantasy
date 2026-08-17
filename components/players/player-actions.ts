@@ -2,12 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { Prisma } from "@prisma/client";
+import { Prisma, Sport } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
 import { fetchEspnPlayerRecords } from "@/lib/players/espn";
 import { importPlayerRecords, parsePlayerImportText } from "@/lib/players/import";
 import { normalizePositions } from "@/lib/roster/positions";
+import { normalizePlayerName } from "@/lib/utils/draft";
 
 function playersFeedbackPath(status: "success" | "error", message: string) {
   return `/players?status=${status}&message=${encodeURIComponent(message)}`;
@@ -61,6 +62,78 @@ export async function importEspnPlayers(formData: FormData) {
     redirectPath = playersFeedbackPath("success", `Imported ${result.imported} ESPN players for ${season}.${failureMessage}`);
   } catch (error) {
     redirectPath = playersFeedbackPath("error", error instanceof Error ? error.message : "Could not import ESPN players.");
+  }
+
+  redirect(redirectPath);
+}
+
+export async function addManualPlayer(formData: FormData) {
+  let redirectPath = playersFeedbackPath("success", "Manual player saved.");
+
+  try {
+    const displayName = String(formData.get("displayName") ?? "").trim();
+    const sport = String(formData.get("sport") ?? "") as Sport;
+    const rawPositions = String(formData.get("positions") ?? "");
+
+    if (!displayName) {
+      throw new Error("Enter a player name.");
+    }
+
+    if (!Object.values(Sport).includes(sport)) {
+      throw new Error("Choose a valid sport.");
+    }
+
+    const positions = normalizePositions(sport, rawPositions.split(/[,\s/|]+/));
+
+    if (positions.length === 0) {
+      throw new Error("Enter at least one valid position for this player's sport.");
+    }
+
+    const normalizedName = normalizePlayerName(displayName);
+    const existingPlayer = await prisma.player.findUnique({
+      where: { normalizedName },
+      select: { metadata: true },
+    });
+    const currentMetadata =
+      existingPlayer?.metadata && typeof existingPlayer.metadata === "object" && !Array.isArray(existingPlayer.metadata)
+        ? (existingPlayer.metadata as Record<string, unknown>)
+        : {};
+
+    await prisma.player.upsert({
+      where: { normalizedName },
+      create: {
+        displayName,
+        normalizedName,
+        sport,
+        metadata: {
+          positions,
+          espnPositions: positions,
+          manualPositions: positions,
+          espnId: null,
+          source: "Manual",
+          positionOverrideSource: "manual-player-add",
+          positionOverrideUpdatedAt: new Date().toISOString(),
+        },
+      },
+      update: {
+        displayName,
+        sport,
+        metadata: {
+          ...currentMetadata,
+          positions,
+          espnPositions: positions,
+          manualPositions: positions,
+          espnId: typeof currentMetadata.espnId === "string" ? currentMetadata.espnId : null,
+          source: "Manual",
+          positionOverrideSource: "manual-player-add",
+          positionOverrideUpdatedAt: new Date().toISOString(),
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    revalidatePlayersViews();
+  } catch (error) {
+    redirectPath = playersFeedbackPath("error", error instanceof Error ? error.message : "Could not save manual player.");
   }
 
   redirect(redirectPath);
