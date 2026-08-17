@@ -59,6 +59,11 @@ export function parsePlayerImportText(text: string, source = "manual-player-impo
     return [];
   }
 
+  const fantasyProsPitcherRecords = parseFantasyProsPitcherRankings(rows, source);
+  if (fantasyProsPitcherRecords.length > 0) {
+    return fantasyProsPitcherRecords;
+  }
+
   const delimiter = rows.some((row) => row.includes("\t")) ? "\t" : ",";
   const firstParts = splitDelimitedRow(rows[0], delimiter);
   const header = firstParts.map(normalizeHeader);
@@ -217,6 +222,52 @@ function splitPositions(value: string) {
     .split(/[,\s/|]+/)
     .map((entry) => entry.trim())
     .filter(Boolean);
+}
+
+function parseFantasyProsPitcherRankings(rows: string[], source: string): ImportablePlayerRecord[] {
+  const records: ImportablePlayerRecord[] = [];
+
+  for (let index = 0; index < rows.length; index += 1) {
+    const playerMatch = rows[index].match(/^(.+?)\s+\(([A-Z]{2,3})\)$/);
+    if (!playerMatch) {
+      continue;
+    }
+
+    const positionRow = rows[index + 1] ?? "";
+    const positionMatch = positionRow.match(/^([A-Z,/]+)\d*\b/i);
+    if (!positionMatch) {
+      continue;
+    }
+
+    const playerName = playerMatch[1].trim();
+    const positions = splitPositions(positionMatch[1]).filter((position) => ["SP", "RP"].includes(position.toUpperCase()));
+    const isShoheiOhtaniPitcherRow = normalizePlayerName(playerName) === "shohei ohtani" && positionMatch[1].toUpperCase() === "DH";
+    if (isShoheiOhtaniPitcherRow) {
+      positions.push("DH", "SP");
+    }
+
+    if (positions.length === 0) {
+      continue;
+    }
+
+    const rank = rows[index - 1]?.match(/^\d+$/) ? Number(rows[index - 1]) : null;
+
+    records.push({
+      displayName: playerName,
+      sport: Sport.BASEBALL,
+      team: playerMatch[2],
+      primaryPosition: positions[0],
+      eligiblePositions: positions,
+      source: source === "manual-player-import" ? "fantasypros-pitcher-rankings" : source,
+      raw: {
+        row: `${rows[index]}\n${positionRow}`,
+        fantasyProsRank: rank,
+        fantasyProsPosition: positionMatch[1],
+      },
+    });
+  }
+
+  return records;
 }
 
 function splitDelimitedRow(row: string, delimiter: string) {

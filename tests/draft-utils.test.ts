@@ -247,6 +247,39 @@ Hockey,Cale Makar,123,D,D`);
   assert.deepEqual(player.eligiblePositions, ["D"]);
 });
 
+test("parses FantasyPros pasted pitcher rankings", () => {
+  const players = parsePlayerImportText(`1
+Shohei Ohtani (LAD)
+DH1\t1\t1\t1.0\t0.0
+-
+2
+Jacob Misiorowski (MIL)
+SP1\t1\t3\t2.0\t0.8
+-
+10
+Mason Miller (SD)
+RP1\t5\t16\t10.3\t4.5
+-
+12
+Chase Burns (CIN)
+SP,RP1\t6\t25\t13.3\t8.3`);
+
+  assert.deepEqual(
+    players.map((player) => ({
+      displayName: player.displayName,
+      sport: player.sport,
+      primaryPosition: player.primaryPosition,
+      eligiblePositions: player.eligiblePositions,
+    })),
+    [
+      { displayName: "Shohei Ohtani", sport: Sport.BASEBALL, primaryPosition: "DH", eligiblePositions: ["DH", "SP"] },
+      { displayName: "Jacob Misiorowski", sport: Sport.BASEBALL, primaryPosition: "SP", eligiblePositions: ["SP"] },
+      { displayName: "Mason Miller", sport: Sport.BASEBALL, primaryPosition: "RP", eligiblePositions: ["RP"] },
+      { displayName: "Chase Burns", sport: Sport.BASEBALL, primaryPosition: "SP", eligiblePositions: ["SP", "RP"] },
+    ],
+  );
+});
+
 test("basketball roster fit can move a PF/C into center when needed", () => {
   const fit = evaluateRosterFit(Sport.BASKETBALL, [
     { id: "wemby", name: "Victor Wembanyama", sport: Sport.BASKETBALL, positions: normalizePositions(Sport.BASKETBALL, ["PF,C"]) },

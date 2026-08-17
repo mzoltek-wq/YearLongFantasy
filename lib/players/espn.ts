@@ -30,23 +30,19 @@ const ESPN_SPORTS: EspnSportConfig[] = [
     game: "flb",
     sport: Sport.BASEBALL,
     label: "Baseball",
-    defaultPositions: {},
-    eligibleSlotPositions: {
-      0: "C",
+    defaultPositions: {
       1: "1B",
       2: "2B",
       3: "3B",
       4: "SS",
       5: "OF",
-      6: "2B SS",
-      7: "1B 3B",
-      8: "OF",
-      9: "OF",
-      10: "OF",
-      11: "DH",
-      14: "SP",
-      15: "RP",
+      7: "DH",
+      8: "SP",
+      9: "RP",
     },
+    // Baseball eligibleSlots are fantasy lineup slots, not reliable player
+    // positions. Using them caused pitchers to import as infielders.
+    eligibleSlotPositions: {},
   },
   {
     game: "fba",
