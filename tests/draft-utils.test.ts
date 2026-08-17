@@ -15,7 +15,7 @@ import {
 } from "@/lib/utils/draft";
 import { parseKeeperText } from "@/lib/keepers/import";
 import { parsePlayerImportText } from "@/lib/players/import";
-import { evaluateRosterFit, normalizePositions } from "@/lib/roster/positions";
+import { evaluateRosterFit, getRosterPositionSlots, normalizePositions } from "@/lib/roster/positions";
 import { calculateRosterTotals, validateLeagueTotals } from "@/lib/validation/draft";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/keeper-grid-2026.tsv", import.meta.url));
@@ -278,6 +278,35 @@ SP,RP1\t6\t25\t13.3\t8.3`);
       { displayName: "Chase Burns", sport: Sport.BASEBALL, primaryPosition: "SP", eligiblePositions: ["SP", "RP"] },
     ],
   );
+});
+
+test("baseball roster template matches league lineup settings", () => {
+  const slots = getRosterPositionSlots(Sport.BASEBALL);
+
+  assert.deepEqual(slots, [
+    "C",
+    "1B",
+    "2B",
+    "3B",
+    "SS",
+    "IF",
+    "OF",
+    "OF",
+    "OF",
+    "OF",
+    "UTIL",
+    "SP",
+    "SP",
+    "SP",
+    "SP",
+    "SP",
+    "RP",
+    "RP",
+    "P",
+    "BENCH",
+    "BENCH",
+    "BENCH",
+  ]);
 });
 
 test("basketball roster fit can move a PF/C into center when needed", () => {
