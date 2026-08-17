@@ -117,7 +117,7 @@ export function DraftBoardClient({
       return [];
     }
 
-    const openSlots = [...snapshot.slots].filter((slot) => !slot.selectedPlayerName).sort((left, right) => left.overallPickNumber - right.overallPickNumber);
+    const openSlots = [...snapshot.slots].filter((slot) => !slot.isKeeper && !slot.selectedPlayerName).sort((left, right) => left.overallPickNumber - right.overallPickNumber);
     const currentOpenIndex = openSlots.findIndex((slot) => slot.overallPickNumber === currentPick.overallPickNumber);
 
     if (currentOpenIndex === -1) {
