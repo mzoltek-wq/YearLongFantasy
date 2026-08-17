@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { IntegrationType, PickChangeSource, Prisma, Sport } from "@prisma/client";
+import { DraftSelectionType, IntegrationType, PickChangeSource, Prisma, Sport } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
 import {
@@ -76,6 +76,136 @@ async function findManagerForOwnerId(tx: Prisma.TransactionClient, ownerId: stri
   );
 }
 
+async function findOwnerForManager(tx: Prisma.TransactionClient, managerId: string) {
+  const manager = await tx.manager.findUnique({
+    where: { id: managerId },
+  });
+
+  if (!manager) {
+    return null;
+  }
+
+  const owners = await tx.owner.findMany();
+  const managerNameKey = normalizePersonKey(manager.name);
+  const managerDisplayKey = normalizePersonKey(manager.displayName ?? "");
+
+  return (
+    owners.find((owner) => owner.code.toUpperCase() === manager.code.toUpperCase()) ??
+    owners.find((owner) => normalizePersonKey(owner.name) === managerNameKey || normalizePersonKey(owner.name) === managerDisplayKey) ??
+    owners.find((owner) => normalizePersonKey(owner.name).startsWith(managerNameKey) || managerNameKey.startsWith(normalizePersonKey(owner.name))) ??
+    owners.find((owner) => {
+      return Boolean(managerDisplayKey) && (normalizePersonKey(owner.name).startsWith(managerDisplayKey) || managerDisplayKey.startsWith(normalizePersonKey(owner.name)));
+    }) ??
+    null
+  );
+}
+
+type SwappableLiveSlot = Awaited<
+  ReturnType<
+    Prisma.TransactionClient["draftSlot"]["findMany"]
+  >
+>[number] & {
+  defaultOwner: {
+    code: string;
+    name: string;
+  };
+};
+
+type SwappableGridSlot = Awaited<
+  ReturnType<
+    Prisma.TransactionClient["draftGridSlot"]["findMany"]
+  >
+>[number] & {
+  originalManager: {
+    code: string;
+    displayName: string | null;
+    name: string;
+  };
+};
+
+function parseOptionalPickNumber(formData: FormData, key: string) {
+  const rawValue = String(formData.get(key) ?? "").trim();
+
+  if (!rawValue) {
+    return null;
+  }
+
+  const pickNumber = Number(rawValue);
+  return Number.isInteger(pickNumber) && pickNumber > 0 ? pickNumber : null;
+}
+
+function resolveLiveRoundPick({
+  slots,
+  exactOverallPickNumber,
+  ownerName,
+  round,
+}: {
+  slots: SwappableLiveSlot[];
+  exactOverallPickNumber: number | null;
+  ownerName: string;
+  round: number;
+}) {
+  if (exactOverallPickNumber) {
+    const exactSlot = slots.find((slot) => slot.overallPickNumber === exactOverallPickNumber);
+
+    if (!exactSlot) {
+      throw new Error(`${ownerName} does not currently own overall pick ${exactOverallPickNumber} in round ${round}.`);
+    }
+
+    return exactSlot;
+  }
+
+  if (slots.length === 0) {
+    throw new Error(`${ownerName} does not currently own an open or used pick in round ${round}.`);
+  }
+
+  if (slots.length > 1) {
+    const choices = slots
+      .map((slot) => `overall ${slot.overallPickNumber} (${slot.defaultOwner.code}'s original pick)`)
+      .join(", ");
+    throw new Error(`${ownerName} owns multiple picks in round ${round}: ${choices}. Choose the exact pick and try again.`);
+  }
+
+  return slots[0];
+}
+
+function resolveGridRoundPick({
+  slots,
+  exactOverallPickNumber,
+  ownerName,
+  round,
+  year,
+}: {
+  slots: SwappableGridSlot[];
+  exactOverallPickNumber: number | null;
+  ownerName: string;
+  round: number;
+  year: number;
+}) {
+  if (exactOverallPickNumber) {
+    const exactSlot = slots.find((slot) => slot.overallPickNumber === exactOverallPickNumber);
+
+    if (!exactSlot) {
+      throw new Error(`${ownerName} does not currently own overall pick ${exactOverallPickNumber} in round ${round} of the ${year} grid.`);
+    }
+
+    return exactSlot;
+  }
+
+  if (slots.length === 0) {
+    throw new Error(`${ownerName} does not currently own a ${year} draft-grid pick in round ${round}.`);
+  }
+
+  if (slots.length > 1) {
+    const choices = slots
+      .map((slot) => `overall ${slot.overallPickNumber} (${slot.originalManager.code}'s original pick)`)
+      .join(", ");
+    throw new Error(`${ownerName} owns multiple ${year} picks in round ${round}: ${choices}. Choose the exact pick and try again.`);
+  }
+
+  return slots[0];
+}
+
 function serializeDate(value: Date | null | undefined) {
   return value ? value.toISOString() : null;
 }
@@ -84,45 +214,38 @@ export async function swapDraftPickOwnership(formData: FormData) {
   let redirectPath = "/admin?status=success&message=Draft%20picks%20swapped.";
 
   try {
+    const year = Number(formData.get("year"));
     const leftOwnerId = String(formData.get("leftOwnerId") ?? "");
     const rightOwnerId = String(formData.get("rightOwnerId") ?? "");
-    const leftPickNumber = Number(formData.get("leftPickNumber"));
-    const rightPickNumber = Number(formData.get("rightPickNumber"));
+    const leftRound = Number(formData.get("leftRound"));
+    const rightRound = Number(formData.get("rightRound"));
+    const leftOverallPickNumber = parseOptionalPickNumber(formData, "leftOverallPickNumber");
+    const rightOverallPickNumber = parseOptionalPickNumber(formData, "rightOverallPickNumber");
     const notes = String(formData.get("notes") ?? "").trim();
+
+    if (!Number.isInteger(year)) {
+      throw new Error("Choose a valid draft year.");
+    }
 
     if (!leftOwnerId || !rightOwnerId) {
       throw new Error("Both owners are required.");
     }
 
-    if (!Number.isInteger(leftPickNumber) || leftPickNumber <= 0 || !Number.isInteger(rightPickNumber) || rightPickNumber <= 0) {
-      throw new Error("Both pick numbers must be positive whole numbers.");
+    if (!Number.isInteger(leftRound) || leftRound <= 0 || !Number.isInteger(rightRound) || rightRound <= 0) {
+      throw new Error("Both rounds must be positive whole numbers.");
     }
 
-    if (leftPickNumber === rightPickNumber) {
-      throw new Error("Pick numbers must be different.");
+    if (leftOwnerId === rightOwnerId && leftRound === rightRound) {
+      throw new Error("Choose two different owner/round picks.");
     }
 
     await prisma.$transaction(
       async (tx) => {
-        const [leftSlot, rightSlot, leftOwner, rightOwner, season] = await Promise.all([
-          tx.draftSlot.findUnique({
-            where: { overallPickNumber: leftPickNumber },
-            include: {
-              currentOwner: true,
-              defaultOwner: true,
-            },
-          }),
-          tx.draftSlot.findUnique({
-            where: { overallPickNumber: rightPickNumber },
-            include: {
-              currentOwner: true,
-              defaultOwner: true,
-            },
-          }),
+        const [leftOwner, rightOwner, season] = await Promise.all([
           tx.owner.findUnique({ where: { id: leftOwnerId } }),
           tx.owner.findUnique({ where: { id: rightOwnerId } }),
           tx.leagueSeason.findFirst({
-            where: { year: CURRENT_DRAFT_GRID_YEAR },
+            where: { year },
             include: {
               drafts: {
                 orderBy: { createdAt: "asc" },
@@ -132,68 +255,105 @@ export async function swapDraftPickOwnership(formData: FormData) {
           }),
         ]);
 
-        if (!leftSlot || !rightSlot) {
-          throw new Error("Could not find one of those picks.");
-        }
-
         if (!leftOwner || !rightOwner) {
           throw new Error("Could not find one of those owners.");
         }
 
-        if (leftSlot.currentOwnerId !== leftOwner.id) {
-          throw new Error(`Pick ${leftPickNumber} is currently owned by ${leftSlot.currentOwner.name}, not ${leftOwner.name}.`);
+        if (!season) {
+          throw new Error(`Could not find a ${year} season/draft grid.`);
         }
 
-        if (rightSlot.currentOwnerId !== rightOwner.id) {
-          throw new Error(`Pick ${rightPickNumber} is currently owned by ${rightSlot.currentOwner.name}, not ${rightOwner.name}.`);
+        const draft = season.drafts[0];
+
+        if (!draft) {
+          throw new Error(`Could not find a ${year} draft grid.`);
         }
 
-        if (leftSlot.selectedPlayerName || rightSlot.selectedPlayerName) {
-          throw new Error("Only unused/open picks can be swapped. One of those picks is already filled.");
-        }
-
-        const [leftNewOwnerCode, rightNewOwnerCode, leftManager, rightManager] = await Promise.all([
-          tx.ownerCode.findFirst({
-            where: { ownerId: rightOwner.id },
-            orderBy: { createdAt: "asc" },
-          }),
-          tx.ownerCode.findFirst({
-            where: { ownerId: leftOwner.id },
-            orderBy: { createdAt: "asc" },
-          }),
+        const [leftManager, rightManager] = await Promise.all([
           findManagerForOwnerId(tx, leftOwner.id),
           findManagerForOwnerId(tx, rightOwner.id),
         ]);
 
-        await Promise.all([
-          tx.draftSlot.update({
-            where: { id: leftSlot.id },
-            data: {
-              currentOwnerId: rightOwner.id,
-              overrideOwnerCode: rightOwner.id === leftSlot.defaultOwnerId ? null : (leftNewOwnerCode?.code ?? rightOwner.code),
-            },
-          }),
-          tx.draftSlot.update({
-            where: { id: rightSlot.id },
-            data: {
-              currentOwnerId: leftOwner.id,
-              overrideOwnerCode: leftOwner.id === rightSlot.defaultOwnerId ? null : (rightNewOwnerCode?.code ?? leftOwner.code),
-            },
-          }),
-        ]);
+        if (!leftManager || !rightManager) {
+          throw new Error("Could not map one of those owners to the draft grid manager records.");
+        }
 
-        const draft = season?.drafts[0];
         const swapNotes =
           notes ||
-          `Manual mid-draft pick swap: ${leftOwner.name} pick ${leftPickNumber} for ${rightOwner.name} pick ${rightPickNumber}.`;
+          `Manual ${year} pick swap: ${leftOwner.name} round ${leftRound} for ${rightOwner.name} round ${rightRound}.`;
 
-        if (draft && leftManager && rightManager) {
+        if (year === CURRENT_DRAFT_GRID_YEAR) {
+          const [leftSlots, rightSlots, leftNewOwnerCode, rightNewOwnerCode] = await Promise.all([
+            tx.draftSlot.findMany({
+              where: {
+                round: leftRound,
+                currentOwnerId: leftOwner.id,
+              },
+              include: {
+                currentOwner: true,
+                defaultOwner: true,
+              },
+            }),
+            tx.draftSlot.findMany({
+              where: {
+                round: rightRound,
+                currentOwnerId: rightOwner.id,
+              },
+              include: {
+                currentOwner: true,
+                defaultOwner: true,
+              },
+            }),
+            tx.ownerCode.findFirst({
+              where: { ownerId: rightOwner.id },
+              orderBy: { createdAt: "asc" },
+            }),
+            tx.ownerCode.findFirst({
+              where: { ownerId: leftOwner.id },
+              orderBy: { createdAt: "asc" },
+            }),
+          ]);
+
+          const leftSlot = resolveLiveRoundPick({
+            slots: leftSlots,
+            exactOverallPickNumber: leftOverallPickNumber,
+            ownerName: leftOwner.name,
+            round: leftRound,
+          });
+          const rightSlot = resolveLiveRoundPick({
+            slots: rightSlots,
+            exactOverallPickNumber: rightOverallPickNumber,
+            ownerName: rightOwner.name,
+            round: rightRound,
+          });
+
+          if (leftSlot.selectedPlayerName || rightSlot.selectedPlayerName) {
+            throw new Error("Only unused/open picks can be swapped. One of those owner-round picks is already filled.");
+          }
+
+          await Promise.all([
+            tx.draftSlot.update({
+              where: { id: leftSlot.id },
+              data: {
+                currentOwnerId: rightOwner.id,
+                overrideOwnerCode: rightOwner.id === leftSlot.defaultOwnerId ? null : (leftNewOwnerCode?.code ?? rightOwner.code),
+              },
+            }),
+            tx.draftSlot.update({
+              where: { id: rightSlot.id },
+              data: {
+                currentOwnerId: leftOwner.id,
+                overrideOwnerCode: leftOwner.id === rightSlot.defaultOwnerId ? null : (rightNewOwnerCode?.code ?? leftOwner.code),
+              },
+            }),
+          ]);
+
           const [leftGridSlot, rightGridSlot] = await Promise.all([
             tx.draftGridSlot.findUnique({
               where: {
                 draftId_overallPickNumber: {
                   draftId: draft.id,
-                  overallPickNumber: leftPickNumber,
+                  overallPickNumber: leftSlot.overallPickNumber,
                 },
               },
             }),
@@ -201,7 +361,7 @@ export async function swapDraftPickOwnership(formData: FormData) {
               where: {
                 draftId_overallPickNumber: {
                   draftId: draft.id,
-                  overallPickNumber: rightPickNumber,
+                    overallPickNumber: rightSlot.overallPickNumber,
                 },
               },
             }),
@@ -247,7 +407,227 @@ export async function swapDraftPickOwnership(formData: FormData) {
               }),
             ]);
           }
+
+          return;
         }
+
+        const [leftGridSlots, rightGridSlots] = await Promise.all([
+          tx.draftGridSlot.findMany({
+            where: {
+              draftId: draft.id,
+              round: leftRound,
+              currentManagerId: leftManager.id,
+            },
+            include: {
+              originalManager: true,
+            },
+          }),
+          tx.draftGridSlot.findMany({
+            where: {
+              draftId: draft.id,
+              round: rightRound,
+              currentManagerId: rightManager.id,
+            },
+            include: {
+              originalManager: true,
+            },
+          }),
+        ]);
+
+        const leftGridSlot = resolveGridRoundPick({
+          slots: leftGridSlots,
+          exactOverallPickNumber: leftOverallPickNumber,
+          ownerName: leftOwner.name,
+          round: leftRound,
+          year,
+        });
+        const rightGridSlot = resolveGridRoundPick({
+          slots: rightGridSlots,
+          exactOverallPickNumber: rightOverallPickNumber,
+          ownerName: rightOwner.name,
+          round: rightRound,
+          year,
+        });
+
+        if (leftGridSlot.playerName || rightGridSlot.playerName || leftGridSlot.selectionType !== DraftSelectionType.OPEN || rightGridSlot.selectionType !== DraftSelectionType.OPEN) {
+          throw new Error("Only unused/open future picks can be swapped. One of those owner-round picks is already filled.");
+        }
+
+        await Promise.all([
+          tx.draftGridSlot.update({
+            where: { id: leftGridSlot.id },
+            data: {
+              currentManagerId: rightManager.id,
+              notes: [leftGridSlot.notes, swapNotes].filter(Boolean).join("\n"),
+            },
+          }),
+          tx.draftGridSlot.update({
+            where: { id: rightGridSlot.id },
+            data: {
+              currentManagerId: leftManager.id,
+              notes: [rightGridSlot.notes, swapNotes].filter(Boolean).join("\n"),
+            },
+          }),
+          tx.pickOwnershipChange.createMany({
+            data: [
+              {
+                seasonId: season.id,
+                draftGridSlotId: leftGridSlot.id,
+                fromManagerId: leftManager.id,
+                toManagerId: rightManager.id,
+                source: PickChangeSource.MANUAL,
+                notes: swapNotes,
+                approvedAt: new Date(),
+              },
+              {
+                seasonId: season.id,
+                draftGridSlotId: rightGridSlot.id,
+                fromManagerId: rightManager.id,
+                toManagerId: leftManager.id,
+                source: PickChangeSource.MANUAL,
+                notes: swapNotes,
+                approvedAt: new Date(),
+              },
+            ],
+          }),
+        ]);
+      },
+      {
+        maxWait: 10000,
+        timeout: 20000,
+      },
+    );
+
+    revalidateAdminViews();
+    revalidatePath(`/league/${year}/grid`);
+  } catch (error) {
+    redirectPath = `/admin?status=error&message=${encodeURIComponent(error instanceof Error ? error.message : "Could not swap draft picks.")}`;
+  }
+
+  redirect(redirectPath);
+}
+
+export async function undoDraftPickOwnershipSwap(formData: FormData) {
+  let redirectPath = "/admin?status=success&message=Pick%20swap%20undone.";
+
+  try {
+    const changeIds = String(formData.get("changeIds") ?? "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean);
+
+    if (changeIds.length !== 2) {
+      throw new Error("Choose a valid two-pick swap to undo.");
+    }
+
+    await prisma.$transaction(
+      async (tx) => {
+        const changes = await tx.pickOwnershipChange.findMany({
+          where: {
+            id: {
+              in: changeIds,
+            },
+          },
+          include: {
+            season: true,
+            draftGridSlot: true,
+            fromManager: true,
+            toManager: true,
+          },
+        });
+
+        if (changes.length !== 2) {
+          throw new Error("Could not find both sides of that pick swap.");
+        }
+
+        const [firstChange, secondChange] = changes;
+        if (firstChange.seasonId !== secondChange.seasonId) {
+          throw new Error("Those pick changes are not from the same season.");
+        }
+
+        for (const change of changes) {
+          const slot = change.draftGridSlot;
+
+          if (slot.playerName || slot.selectionType !== DraftSelectionType.OPEN) {
+            throw new Error(`Cannot undo this swap because overall pick ${slot.overallPickNumber} is already filled.`);
+          }
+
+          if (slot.currentManagerId !== change.toManagerId) {
+            throw new Error(`Cannot undo this swap because overall pick ${slot.overallPickNumber} has changed owners again.`);
+          }
+        }
+
+        await Promise.all(
+          changes.map((change) =>
+            tx.draftGridSlot.update({
+              where: { id: change.draftGridSlotId },
+              data: {
+                currentManagerId: change.fromManagerId,
+                notes: [change.draftGridSlot.notes, `Undo: ${change.notes ?? "manual pick swap"}`].filter(Boolean).join("\n"),
+              },
+            }),
+          ),
+        );
+
+        if (firstChange.season.year === CURRENT_DRAFT_GRID_YEAR) {
+          const ownerPairs = await Promise.all(
+            changes.map(async (change) => {
+              const owner = await findOwnerForManager(tx, change.fromManagerId);
+              const ownerCode = owner
+                ? await tx.ownerCode.findFirst({
+                    where: { ownerId: owner.id },
+                    orderBy: { createdAt: "asc" },
+                  })
+                : null;
+
+              return {
+                change,
+                owner,
+                ownerCode,
+              };
+            }),
+          );
+
+          for (const { change, owner, ownerCode } of ownerPairs) {
+            if (!owner) {
+              throw new Error(`Could not map ${change.fromManager.displayName ?? change.fromManager.name} back to a live draft owner.`);
+            }
+
+            const liveSlot = await tx.draftSlot.findUnique({
+              where: { overallPickNumber: change.draftGridSlot.overallPickNumber },
+            });
+
+            if (!liveSlot) {
+              throw new Error(`Could not find live draft pick ${change.draftGridSlot.overallPickNumber}.`);
+            }
+
+            if (liveSlot.selectedPlayerName) {
+              throw new Error(`Cannot undo this swap because live pick ${liveSlot.overallPickNumber} is already filled.`);
+            }
+
+            await tx.draftSlot.update({
+              where: { id: liveSlot.id },
+              data: {
+                currentOwnerId: owner.id,
+                overrideOwnerCode: owner.id === liveSlot.defaultOwnerId ? null : (ownerCode?.code ?? owner.code),
+              },
+            });
+          }
+        }
+
+        await tx.pickOwnershipChange.createMany({
+          data: changes.map((change) => ({
+            seasonId: change.seasonId,
+            draftGridSlotId: change.draftGridSlotId,
+            fromManagerId: change.toManagerId,
+            toManagerId: change.fromManagerId,
+            source: PickChangeSource.MANUAL,
+            notes: `Undo: ${change.notes ?? "manual pick swap"}`,
+            approvedAt: new Date(),
+          })),
+        });
+
+        revalidatePath(`/league/${firstChange.season.year}/grid`);
       },
       {
         maxWait: 10000,
@@ -257,7 +637,7 @@ export async function swapDraftPickOwnership(formData: FormData) {
 
     revalidateAdminViews();
   } catch (error) {
-    redirectPath = `/admin?status=error&message=${encodeURIComponent(error instanceof Error ? error.message : "Could not swap draft picks.")}`;
+    redirectPath = `/admin?status=error&message=${encodeURIComponent(error instanceof Error ? error.message : "Could not undo that pick swap.")}`;
   }
 
   redirect(redirectPath);

@@ -7,10 +7,12 @@ import {
   saveStart2026DraftStateSnapshot,
   swapDraftPickOwnership,
   syncKeeperGoogleSheetSourceFromForm,
+  undoDraftPickOwnershipSwap,
   updateOwnerName,
   updateRosterLimits,
 } from "@/components/admin/admin-actions";
 import { ConfirmActionButton } from "@/components/admin/confirm-action-button";
+import { PickSwapForm, PickSwapOption } from "@/components/admin/pick-swap-form";
 import { SyncSheetForm } from "@/components/admin/sync-sheet-form";
 import { importV2TradedPicksText } from "@/components/league/league-actions";
 import { Card } from "@/components/ui/card";
@@ -21,6 +23,12 @@ import { getRosterPositionSlots } from "@/lib/roster/positions";
 import { formatRosterSlotTemplate } from "@/lib/roster/settings";
 import { sportWithEmoji } from "@/lib/utils/format";
 
+const CURRENT_DRAFT_GRID_YEAR = 2026;
+
+function normalizePersonKey(value: string) {
+  return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
 export async function AdminPanel({
   feedback,
 }: {
@@ -29,7 +37,7 @@ export async function AdminPanel({
     message?: string;
   };
 }) {
-  const [snapshot, googleSheetConfig, start2026Snapshot] = await Promise.all([
+  const [snapshot, googleSheetConfig, start2026Snapshot, leagueSeasons, recentPickChanges, managers] = await Promise.all([
     getLeagueSnapshot(),
     getGoogleSheetSourceConfig(),
     prisma.importedRecord.findFirst({
@@ -39,9 +47,118 @@ export async function AdminPanel({
       },
       orderBy: { createdAt: "desc" },
     }),
+    prisma.leagueSeason.findMany({
+      include: {
+        drafts: {
+          orderBy: { createdAt: "asc" },
+          take: 1,
+          include: {
+            gridSlots: {
+              include: {
+                currentManager: true,
+                originalManager: true,
+              },
+              orderBy: { overallPickNumber: "asc" },
+            },
+          },
+        },
+      },
+      orderBy: { year: "asc" },
+    }),
+    prisma.pickOwnershipChange.findMany({
+      include: {
+        draftGridSlot: {
+          include: {
+            originalManager: true,
+          },
+        },
+        fromManager: true,
+        season: true,
+        toManager: true,
+      },
+      orderBy: { createdAt: "desc" },
+      take: 24,
+    }),
+    prisma.manager.findMany(),
   ]);
   const currentYear = new Date().getFullYear();
   const openDraftPicks = snapshot.slots.filter((slot) => !slot.selectedPlayerName);
+  const managerToOwnerId = new Map(
+    managers
+      .map((manager) => {
+        const managerNameKey = normalizePersonKey(manager.name);
+        const managerDisplayKey = normalizePersonKey(manager.displayName ?? "");
+        const owner =
+          snapshot.owners.find((candidate) => candidate.code.toUpperCase() === manager.code.toUpperCase()) ??
+          snapshot.owners.find((candidate) => normalizePersonKey(candidate.name) === managerNameKey || normalizePersonKey(candidate.name) === managerDisplayKey) ??
+          snapshot.owners.find((candidate) => normalizePersonKey(candidate.name).startsWith(managerNameKey) || managerNameKey.startsWith(normalizePersonKey(candidate.name))) ??
+          snapshot.owners.find((candidate) => {
+            return Boolean(managerDisplayKey) && (normalizePersonKey(candidate.name).startsWith(managerDisplayKey) || managerDisplayKey.startsWith(normalizePersonKey(candidate.name)));
+          });
+
+        return owner ? [manager.id, owner.id] : null;
+      })
+      .filter((pair): pair is [string, string] => Boolean(pair)),
+  );
+  const defaultSwapYear = snapshot.draftWindow.completed ? CURRENT_DRAFT_GRID_YEAR + 1 : CURRENT_DRAFT_GRID_YEAR;
+  const pickSwapYears = Array.from(new Set([...leagueSeasons.map((season) => season.year), defaultSwapYear, defaultSwapYear + 1])).sort((left, right) => left - right);
+  const livePickSwapOptions: PickSwapOption[] = snapshot.slots.map((slot) => ({
+    id: slot.id,
+    year: CURRENT_DRAFT_GRID_YEAR,
+    ownerId: slot.currentOwnerId,
+    round: slot.round,
+    overallPickNumber: slot.overallPickNumber,
+    originalOwnerName: slot.defaultOwner.name,
+    originalOwnerCode: slot.defaultOwner.code,
+    selectedPlayerName: slot.selectedPlayerName,
+  }));
+  const gridPickSwapOptions: PickSwapOption[] = leagueSeasons
+    .filter((season) => season.year !== CURRENT_DRAFT_GRID_YEAR)
+    .flatMap((season) => {
+      const draft = season.drafts[0];
+
+      if (!draft) {
+        return [];
+      }
+
+      return draft.gridSlots.flatMap((slot) => {
+        const ownerId = managerToOwnerId.get(slot.currentManagerId);
+
+        if (!ownerId) {
+          return [];
+        }
+
+        return [
+          {
+            id: slot.id,
+            year: season.year,
+            ownerId,
+            round: slot.round,
+            overallPickNumber: slot.overallPickNumber,
+            originalOwnerName: slot.originalManager.displayName ?? slot.originalManager.name,
+            originalOwnerCode: slot.originalManager.code,
+            selectedPlayerName: slot.playerName,
+          },
+        ];
+      });
+    });
+  const pickSwapOptions = [...livePickSwapOptions, ...gridPickSwapOptions];
+  const recentPickSwapGroups = recentPickChanges.reduce<
+    Array<{
+      key: string;
+      changes: typeof recentPickChanges;
+    }>
+  >((groups, change) => {
+    const groupKey = `${change.seasonId}:${change.notes ?? "No notes"}:${Math.floor(change.createdAt.getTime() / 5000)}`;
+    const existingGroup = groups.find((group) => group.key === groupKey);
+
+    if (existingGroup) {
+      existingGroup.changes.push(change);
+      return groups;
+    }
+
+    return [...groups, { key: groupKey, changes: [change] }];
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -216,65 +333,72 @@ export async function AdminPanel({
         <Card>
           <h2 className="text-xl font-semibold">Mid-draft pick swap</h2>
           <p className="mt-2 text-sm text-[var(--muted)]">
-            Swap ownership of two unused picks after a trade. This is intentionally 1-for-1 for now and will fail if either pick has already been used.
+            Swap ownership of two unused round picks after a trade. Enter the round number from the grid, not the overall pick number. This is intentionally 1-for-1 for now and will fail if either pick has already been used.
           </p>
 
-          <form action={swapDraftPickOwnership} className="mt-4 space-y-4">
-            <div className="grid gap-3 md:grid-cols-[1fr_0.7fr]">
-              <label className="block space-y-1">
-                <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Owner giving pick</span>
-                <select className="w-full rounded-xl border border-[var(--border)] px-3 py-2" name="leftOwnerId">
-                  {snapshot.owners.map((owner) => (
-                    <option key={owner.id} value={owner.id}>
-                      {owner.name} ({owner.code})
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block space-y-1">
-                <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Pick #</span>
-                <input className="w-full rounded-xl border border-[var(--border)] px-3 py-2" name="leftPickNumber" placeholder="20" type="number" />
-              </label>
+          <PickSwapForm
+            action={swapDraftPickOwnership}
+            defaultYear={defaultSwapYear}
+            openPickCount={openDraftPicks.length}
+            options={pickSwapOptions}
+            owners={snapshot.owners.map((owner) => ({ id: owner.id, name: owner.name, code: owner.code }))}
+            years={pickSwapYears}
+          />
+
+          <div className="mt-6 border-t border-[var(--border)] pt-4">
+            <h3 className="font-semibold">Recent pick swap history</h3>
+            <div className="mt-3 space-y-3">
+              {recentPickSwapGroups.length > 0 ? (
+                recentPickSwapGroups.slice(0, 6).map((group) => {
+                  const canUndo = group.changes.length === 2 && !group.changes.some((change) => change.notes?.startsWith("Undo:"));
+                  const firstChange = group.changes[0];
+
+                  return (
+                    <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-strong)] px-4 py-3" key={group.key}>
+                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                        <div>
+                          <p className="text-sm font-semibold">
+                            {firstChange.season.year} swap · {firstChange.createdAt.toLocaleString()}
+                          </p>
+                          <p className="mt-1 text-xs text-[var(--muted)]">{firstChange.notes ?? "Manual pick ownership change"}</p>
+                        </div>
+                        {canUndo ? (
+                          <form action={undoDraftPickOwnershipSwap}>
+                            <input name="changeIds" type="hidden" value={group.changes.map((change) => change.id).join(",")} />
+                            <ConfirmActionButton
+                              action={undoDraftPickOwnershipSwap}
+                              className="rounded-full border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-900"
+                              message="Undo this pick swap? This will only work if both picks are still unused and have not been traded again."
+                            >
+                              Undo
+                            </ConfirmActionButton>
+                          </form>
+                        ) : null}
+                      </div>
+                      <div className="mt-3 grid gap-2">
+                        {group.changes.map((change) => (
+                          <p className="rounded-xl bg-white px-3 py-2 text-xs text-[var(--muted)]" key={change.id}>
+                            Round {change.draftGridSlot.round}, overall {change.draftGridSlot.overallPickNumber}:{" "}
+                            <span className="font-semibold text-[var(--foreground)]">
+                              {change.fromManager.displayName ?? change.fromManager.name}
+                            </span>{" "}
+                            to{" "}
+                            <span className="font-semibold text-[var(--foreground)]">
+                              {change.toManager.displayName ?? change.toManager.name}
+                            </span>
+                            {" · "}Original pick: {change.draftGridSlot.originalManager.displayName ?? change.draftGridSlot.originalManager.name}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="rounded-2xl border border-[var(--border)] bg-[var(--surface-strong)] px-4 py-3 text-sm text-[var(--muted)]">
+                  No pick swaps logged yet.
+                </p>
+              )}
             </div>
-
-            <div className="rounded-2xl border border-dashed border-[var(--border)] px-4 py-3 text-center text-xs font-semibold uppercase tracking-[0.24em] text-[var(--muted)]">
-              swaps with
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-[1fr_0.7fr]">
-              <label className="block space-y-1">
-                <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Owner giving pick</span>
-                <select className="w-full rounded-xl border border-[var(--border)] px-3 py-2" name="rightOwnerId">
-                  {snapshot.owners.map((owner) => (
-                    <option key={owner.id} value={owner.id}>
-                      {owner.name} ({owner.code})
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block space-y-1">
-                <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Pick #</span>
-                <input className="w-full rounded-xl border border-[var(--border)] px-3 py-2" name="rightPickNumber" placeholder="53" type="number" />
-              </label>
-            </div>
-
-            <label className="block space-y-1">
-              <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Optional note</span>
-              <input
-                className="w-full rounded-xl border border-[var(--border)] px-3 py-2"
-                name="notes"
-                placeholder="Example: mid-draft trade text or reason"
-                type="text"
-              />
-            </label>
-
-            <button className="rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-white" type="submit">
-              Swap unused picks
-            </button>
-          </form>
-
-          <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--surface-strong)] px-4 py-3 text-sm text-[var(--muted)]">
-            {openDraftPicks.length} picks are currently open. If a pick number is wrong or already belongs to someone else, the swap will be rejected before anything changes.
           </div>
         </Card>
 
