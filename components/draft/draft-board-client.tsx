@@ -48,6 +48,13 @@ type PlayerTakenSelection = {
   playerName: string;
 };
 
+type PickDistance = {
+  ownerId: string;
+  code: string;
+  ownerName: string;
+  picksBeforeNext: number | null;
+};
+
 async function requestJson<T>(input: RequestInfo, init?: RequestInit) {
   const response = await fetch(input, {
     cache: "no-store",
@@ -97,6 +104,45 @@ export function DraftBoardClient({ initialSnapshot, snapshotOverride, autoRefres
   const isTrackerMode = mode === "tracker";
   const recentPickLimit = isTrackerMode ? 10 : 5;
   const upcomingPickLimit = isTrackerMode ? 10 : 5;
+  const pickDistances = useMemo<PickDistance[]>(() => {
+    if (!currentPick) {
+      return [];
+    }
+
+    const openSlots = [...snapshot.slots].filter((slot) => !slot.selectedPlayerName).sort((left, right) => left.overallPickNumber - right.overallPickNumber);
+    const currentOpenIndex = openSlots.findIndex((slot) => slot.overallPickNumber === currentPick.overallPickNumber);
+
+    if (currentOpenIndex === -1) {
+      return [];
+    }
+
+    return snapshot.owners
+      .map((owner) => {
+        const nextSlotIndex = openSlots.findIndex((slot, index) => index > currentOpenIndex && slot.currentOwnerId === owner.id);
+
+        return {
+          ownerId: owner.id,
+          code: owner.code,
+          ownerName: owner.name,
+          picksBeforeNext: nextSlotIndex === -1 ? null : nextSlotIndex - currentOpenIndex,
+        };
+      })
+      .sort((left, right) => {
+        if (left.picksBeforeNext == null && right.picksBeforeNext == null) {
+          return left.code.localeCompare(right.code);
+        }
+
+        if (left.picksBeforeNext == null) {
+          return 1;
+        }
+
+        if (right.picksBeforeNext == null) {
+          return -1;
+        }
+
+        return left.picksBeforeNext - right.picksBeforeNext || left.code.localeCompare(right.code);
+      });
+  }, [currentPick, snapshot.owners, snapshot.slots]);
 
   useEffect(() => {
     if (!autoRefresh) {
@@ -294,18 +340,46 @@ export function DraftBoardClient({ initialSnapshot, snapshotOverride, autoRefres
     }
   }
 
+  function renderPickDistanceStrip(compact = false) {
+    if (pickDistances.length === 0) {
+      return null;
+    }
+
+    return (
+      <div className={`border-t border-[var(--border)] ${compact ? "mt-2 pt-2" : "mt-3 pt-3"}`}>
+        <p className={`${compact ? "text-[10px]" : "text-xs"} font-semibold uppercase tracking-[0.22em] text-[var(--muted)]`}>Picks before next pick</p>
+        <div className={`mt-2 flex flex-wrap ${compact ? "gap-1.5" : "gap-2"}`}>
+          {pickDistances.map((entry) => (
+            <span
+              className={`rounded-full border font-semibold ${
+                entry.ownerId === currentPick?.currentOwnerId
+                  ? "border-[var(--accent)] bg-[var(--accent)] text-white"
+                  : "border-[var(--border)] bg-[var(--surface-strong)] text-[var(--muted)]"
+              } ${compact ? "px-2 py-0.5 text-[11px]" : "px-2.5 py-1 text-xs"}`}
+              key={entry.ownerId}
+              title={entry.ownerName}
+            >
+              {entry.ownerId === currentPick?.currentOwnerId ? "⏱️ " : ""}
+              {entry.code}: {entry.picksBeforeNext ?? "--"}
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className={`grid gap-6 ${isTrackerMode ? "" : "xl:grid-cols-[1.15fr_2fr]"}`}>
         {!isTrackerMode ? (
           <div className="space-y-6 rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-6">
-          <div className="space-y-3">
+          <div className="sticky top-3 z-10 -mx-2 space-y-3 rounded-[24px] border border-[var(--border)] bg-[var(--surface)]/95 px-2 py-3 backdrop-blur">
             <p className="text-xs uppercase tracking-[0.4em] text-[var(--muted)]">Draft pulse</p>
             <h2 className="text-2xl font-semibold">{snapshot.draftWindow.completed ? "Draft complete" : `Pick ${currentPick?.overallPickNumber}`}</h2>
             {currentPick ? (
               <div className="space-y-1 text-sm text-[var(--muted)]">
                 <p>
-                  Current owner: <span className="font-semibold text-[var(--ink)]">{currentPick.currentOwner.name}</span>
+                  Current owner: <span className="font-semibold text-[var(--ink)]">⏱️ {currentPick.currentOwner.name}</span>
                 </p>
                 <p>
                   Round {currentPick.round}, slot {currentPick.slotNumber}
@@ -317,6 +391,7 @@ export function DraftBoardClient({ initialSnapshot, snapshotOverride, autoRefres
             ) : (
               <p className="text-sm text-[var(--muted)]">All picks are currently filled.</p>
             )}
+            {renderPickDistanceStrip()}
             {editingPick ? (
               <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -530,20 +605,23 @@ export function DraftBoardClient({ initialSnapshot, snapshotOverride, autoRefres
         <div className="space-y-6">
           {isTrackerMode ? (
             <div
-              className={`sticky ${trackerStickyClassName} z-20 rounded-[22px] border border-[var(--border)] bg-[var(--surface)]/95 px-4 py-3 shadow-lg shadow-slate-900/5 backdrop-blur`}
+              className={`sticky ${trackerStickyClassName} z-20 rounded-[22px] border border-[var(--border)] bg-[var(--surface)]/95 px-3 py-2.5 shadow-lg shadow-slate-900/5 backdrop-blur sm:px-4 sm:py-3`}
             >
               {currentPick ? (
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[var(--muted)]">
-                  <span className="text-base font-semibold text-[var(--ink)]">
-                    R{currentPick.round} · Pick {currentPick.overallPickNumber}
-                  </span>
-                  <span>
-                    Up <span className="font-semibold text-[var(--ink)]">{currentPick.currentOwner.name}</span>
-                  </span>
-                  <span className="hidden text-[var(--border)] sm:inline">/</span>
-                  <span>
-                    Next <span className="font-semibold text-[var(--ink)]">{nextPick?.currentOwner.name ?? "End"}</span>
-                  </span>
+                <div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[var(--muted)]">
+                    <span className="text-base font-semibold text-[var(--ink)]">
+                      R{currentPick.round} · Pick {currentPick.overallPickNumber}
+                    </span>
+                    <span>
+                      Up <span className="font-semibold text-[var(--ink)]">⏱️ {currentPick.currentOwner.name}</span>
+                    </span>
+                    <span className="hidden text-[var(--border)] sm:inline">/</span>
+                    <span>
+                      Next <span className="font-semibold text-[var(--ink)]">{nextPick?.currentOwner.name ?? "End"}</span>
+                    </span>
+                  </div>
+                  {renderPickDistanceStrip(true)}
                 </div>
               ) : (
                 <p className="text-sm font-semibold text-[var(--ink)]">{snapshot.draftWindow.completed ? "Draft complete" : "All picks are currently filled."}</p>
