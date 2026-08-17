@@ -208,6 +208,30 @@ export function extractPositionsFromMetadata(sport: Sport, metadata: unknown) {
     }
   }
 
+  if (sport === Sport.BASKETBALL) {
+    const basketballPositions = normalizePositions(
+      sport,
+      [
+        record.position,
+        record.positionGroup,
+        record.positions,
+        record.espnPositions,
+        record.eligiblePositions,
+        record.playerPositions,
+        raw.player_espn_positions,
+        raw.player_positions,
+        raw.primary_position,
+        raw.player_eligibility,
+      ].flatMap((candidate) => (Array.isArray(candidate) ? candidate.map(String) : [candidate == null ? "" : String(candidate)])),
+    );
+    const primaryBasketballPositions = normalizePositions(sport, [
+      typeof record.primaryPosition === "string" ? record.primaryPosition : null,
+      typeof raw.primary_position === "string" ? raw.primary_position : null,
+    ]);
+
+    return normalizeBasketballEligibility(basketballPositions, primaryBasketballPositions[0]);
+  }
+
   const candidates = [
     record.position,
     record.positionGroup,
@@ -228,6 +252,14 @@ export function extractPositionsFromMetadata(sport: Sport, metadata: unknown) {
     sport,
     candidates.flatMap((candidate) => (Array.isArray(candidate) ? candidate.map(String) : [candidate == null ? "" : String(candidate)])),
   );
+}
+
+export function normalizeBasketballEligibility(positions: PositionCode[], primaryPosition?: PositionCode | null) {
+  if (!primaryPosition || !["PG", "SG", "SF"].includes(primaryPosition)) {
+    return positions;
+  }
+
+  return positions.filter((position) => position !== "C");
 }
 
 export function canFillRosterSlot(slot: RosterSlotCode, player: RosterPlayer) {

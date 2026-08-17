@@ -1,7 +1,7 @@
 import { Prisma, Sport } from "@prisma/client";
 
 import { buildPlayerMetadata } from "@/lib/players/resolve";
-import { normalizePositions, PositionCode } from "@/lib/roster/positions";
+import { normalizeBasketballEligibility, normalizePositions, PositionCode } from "@/lib/roster/positions";
 import { normalizePlayerName, parseSportFromValue } from "@/lib/utils/draft";
 
 export type ImportablePlayerRecord = {
@@ -150,7 +150,13 @@ function normalizeImportPositions(record: ImportablePlayerRecord) {
     }
   }
 
-  return normalizePositions(record.sport, [record.primaryPosition, ...(record.eligiblePositions ?? [])]);
+  const positions = normalizePositions(record.sport, [record.primaryPosition, ...(record.eligiblePositions ?? [])]);
+
+  if (record.sport === Sport.BASKETBALL) {
+    return normalizeBasketballEligibility(positions, normalizePositions(record.sport, [record.primaryPosition])[0]);
+  }
+
+  return positions;
 }
 
 function buildMetadata(record: ImportablePlayerRecord, positions: PositionCode[], existingMetadata?: unknown) {

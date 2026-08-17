@@ -348,3 +348,27 @@ test("football metadata trusts primary position over noisy eligible slots", () =
     ["WR"],
   );
 });
+
+test("basketball metadata removes noisy center eligibility from guards and wings", () => {
+  assert.deepEqual(
+    extractPositionsFromMetadata(Sport.BASKETBALL, {
+      primaryPosition: "SG",
+      positions: ["SG", "PG", "C"],
+      espnPositions: ["SG", "PG", "C"],
+      eligiblePositions: ["SG", "PG", "C", "G", "F"],
+    }),
+    ["SG", "PG"],
+  );
+});
+
+test("basketball metadata preserves plausible power-forward center eligibility", () => {
+  assert.deepEqual(
+    extractPositionsFromMetadata(Sport.BASKETBALL, {
+      primaryPosition: "PF",
+      positions: ["PF", "C"],
+      espnPositions: ["PF", "C"],
+      eligiblePositions: ["PF", "C"],
+    }),
+    ["PF", "C"],
+  );
+});
