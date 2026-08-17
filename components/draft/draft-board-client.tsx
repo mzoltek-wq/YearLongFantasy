@@ -12,6 +12,7 @@ type DraftBoardClientProps = {
   autoRefresh?: boolean;
   mode?: "commissioner" | "tracker";
   trackerStickyClassName?: string;
+  trackerStickyTop?: string;
 };
 
 type PlayerResolution = {
@@ -73,7 +74,14 @@ async function requestJson<T>(input: RequestInfo, init?: RequestInit) {
   return data;
 }
 
-export function DraftBoardClient({ initialSnapshot, snapshotOverride, autoRefresh = true, mode = "commissioner", trackerStickyClassName = "top-2" }: DraftBoardClientProps) {
+export function DraftBoardClient({
+  initialSnapshot,
+  snapshotOverride,
+  autoRefresh = true,
+  mode = "commissioner",
+  trackerStickyClassName = "top-2",
+  trackerStickyTop,
+}: DraftBoardClientProps) {
   const [localSnapshot, setLocalSnapshot] = useState(initialSnapshot);
   const [playerName, setPlayerName] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -606,6 +614,7 @@ export function DraftBoardClient({ initialSnapshot, snapshotOverride, autoRefres
           {isTrackerMode ? (
             <div
               className={`sticky ${trackerStickyClassName} z-20 rounded-[22px] border border-[var(--border)] bg-[var(--surface)]/95 px-3 py-2.5 shadow-lg shadow-slate-900/5 backdrop-blur sm:px-4 sm:py-3`}
+              style={trackerStickyTop ? { top: trackerStickyTop } : undefined}
             >
               {currentPick ? (
                 <div>

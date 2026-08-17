@@ -33,6 +33,8 @@ export function ReadOnlyLeagueView({ draftSnapshot, draftHistory }: ReadOnlyLeag
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const latestRequestId = useRef(0);
+  const headerRef = useRef<HTMLDivElement>(null);
+  const [headerHeight, setHeaderHeight] = useState(0);
   const draftIsComplete = liveDraftSnapshot.draftWindow.completed;
   const [activeTab, setActiveTab] = useState<LeagueViewTab>(draftIsComplete ? "grid" : "tracker");
   const visibleTabs = draftIsComplete ? tabs.filter((tab) => tab.id !== "tracker") : tabs;
@@ -75,9 +77,29 @@ export function ReadOnlyLeagueView({ draftSnapshot, draftHistory }: ReadOnlyLeag
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    const updateHeaderHeight = () => {
+      setHeaderHeight(headerRef.current?.offsetHeight ?? 0);
+    };
+
+    updateHeaderHeight();
+    window.addEventListener("resize", updateHeaderHeight);
+
+    const observer = typeof ResizeObserver !== "undefined" && headerRef.current ? new ResizeObserver(updateHeaderHeight) : null;
+
+    if (headerRef.current) {
+      observer?.observe(headerRef.current);
+    }
+
+    return () => {
+      window.removeEventListener("resize", updateHeaderHeight);
+      observer?.disconnect();
+    };
+  }, []);
+
   return (
     <div className="min-h-screen bg-[var(--bg)]">
-      <div className="sticky top-0 z-30 border-b border-[var(--border)] bg-[rgba(255,253,247,0.94)] px-3 py-3 backdrop-blur">
+      <div className="sticky top-0 z-30 border-b border-[var(--border)] bg-[rgba(255,253,247,0.94)] px-3 py-3 backdrop-blur" ref={headerRef}>
         <div className="mx-auto flex max-w-7xl flex-col gap-3">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-[0.32em] text-[var(--muted)]">Year Long Fantasy</p>
@@ -119,7 +141,8 @@ export function ReadOnlyLeagueView({ draftSnapshot, draftHistory }: ReadOnlyLeag
             initialSnapshot={draftSnapshot}
             mode="tracker"
             snapshotOverride={liveDraftSnapshot}
-            trackerStickyClassName="top-[8.75rem] sm:top-[9.25rem]"
+            trackerStickyClassName=""
+            trackerStickyTop={`${headerHeight + 12}px`}
           />
         ) : null}
         {displayedTab === "grid" ? <DraftHistoryGrid {...liveDraftHistory} variant="compact" /> : null}
