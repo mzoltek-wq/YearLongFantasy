@@ -89,7 +89,7 @@ export async function importPlayerRecords(db: PlayerWriter, records: ImportableP
 
   async function importRecord(record: ImportablePlayerRecord) {
     const displayName = record.displayName.trim();
-    const positions = normalizePositions(record.sport, [record.primaryPosition, ...(record.eligiblePositions ?? [])]);
+    const positions = normalizeImportPositions(record);
     const normalizedName = normalizePlayerName(displayName);
 
     if (!displayName || !record.sport) {
@@ -140,6 +140,17 @@ export async function importPlayerRecords(db: PlayerWriter, records: ImportableP
     unresolved,
     skipped: skipped.slice(0, 20),
   };
+}
+
+function normalizeImportPositions(record: ImportablePlayerRecord) {
+  if (record.sport === Sport.FOOTBALL && record.primaryPosition) {
+    const primaryPosition = normalizePositions(record.sport, [record.primaryPosition]);
+    if (primaryPosition.length > 0) {
+      return primaryPosition.slice(0, 1);
+    }
+  }
+
+  return normalizePositions(record.sport, [record.primaryPosition, ...(record.eligiblePositions ?? [])]);
 }
 
 function buildMetadata(record: ImportablePlayerRecord, positions: PositionCode[], existingMetadata?: unknown) {

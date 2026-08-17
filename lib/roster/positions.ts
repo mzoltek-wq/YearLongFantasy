@@ -198,6 +198,16 @@ export function extractPositionsFromMetadata(sport: Sport, metadata: unknown) {
     return manualPositions;
   }
 
+  if (sport === Sport.FOOTBALL) {
+    const primaryFootballPositions = normalizePositions(sport, [
+      typeof record.primaryPosition === "string" ? record.primaryPosition : null,
+      typeof raw.primary_position === "string" ? raw.primary_position : null,
+    ]);
+    if (primaryFootballPositions.length > 0) {
+      return primaryFootballPositions.slice(0, 1);
+    }
+  }
+
   const candidates = [
     record.position,
     record.positionGroup,

@@ -15,7 +15,7 @@ import {
 } from "@/lib/utils/draft";
 import { parseKeeperText } from "@/lib/keepers/import";
 import { parsePlayerImportText } from "@/lib/players/import";
-import { evaluateRosterFit, getRosterPositionSlots, normalizePositions } from "@/lib/roster/positions";
+import { evaluateRosterFit, extractPositionsFromMetadata, getRosterPositionSlots, normalizePositions } from "@/lib/roster/positions";
 import { parseRosterSlotTemplate } from "@/lib/roster/settings";
 import { calculateRosterTotals, validateLeagueTotals } from "@/lib/validation/draft";
 
@@ -335,4 +335,16 @@ test("hockey normalization preserves defensemen and goalies", () => {
   assert.deepEqual(normalizePositions(Sport.HOCKEY, ["D"]), ["D"]);
   assert.deepEqual(normalizePositions(Sport.HOCKEY, ["G"]), ["G"]);
   assert.deepEqual(normalizePositions(Sport.HOCKEY, ["C,LW,RW"]), ["F"]);
+});
+
+test("football metadata trusts primary position over noisy eligible slots", () => {
+  assert.deepEqual(
+    extractPositionsFromMetadata(Sport.FOOTBALL, {
+      primaryPosition: "WR",
+      positions: ["WR", "TE", "K"],
+      espnPositions: ["WR", "TE", "K"],
+      eligiblePositions: ["WR", "TE", "K"],
+    }),
+    ["WR"],
+  );
 });
