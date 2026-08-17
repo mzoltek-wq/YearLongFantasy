@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db/prisma";
 import { pushDraftPickWriteback } from "@/lib/import/google-sheets";
 import { buildPlayerMetadata, findExistingDraftSelection, findSimilarDraftSelection, resolveDraftPlayer } from "@/lib/players/resolve";
 import { extractPositionsFromMetadata } from "@/lib/roster/positions";
+import { getRosterSlotSettings } from "@/lib/roster/settings";
 import { DraftSlotWithRelations, KeeperWithRelations, LeagueSnapshot } from "@/lib/types/draft";
 import { normalizePlayerName } from "@/lib/utils/draft";
 import { calculateRosterTotals, getCurrentDraftWindow, validateDraftIntegrity, validateLeagueTotals } from "@/lib/validation/draft";
@@ -15,25 +16,29 @@ function normalizePersonKey(value: string) {
 }
 
 export async function getLeagueSnapshot(): Promise<LeagueSnapshot> {
-  const [owners, ownerCodes, rawSlots, keepers, rosterLimits, settings] = await prisma.$transaction([
-    prisma.owner.findMany({ orderBy: { name: "asc" } }),
-    prisma.ownerCode.findMany({ orderBy: [{ code: "asc" }] }),
-    prisma.draftSlot.findMany({
-      include: {
-        currentOwner: true,
-        defaultOwner: true,
-        selectedPlayer: true,
-        keeper: true,
-      },
-      orderBy: { overallPickNumber: "asc" },
-    }),
-    prisma.keeper.findMany({
-      include: { owner: true, player: true, draftSlot: true },
-      orderBy: [{ sport: "asc" }, { playerName: "asc" }],
-    }),
-    prisma.rosterLimit.findMany({ orderBy: { sport: "asc" } }),
-    prisma.leagueSettings.findFirstOrThrow(),
+  const [leagueData, rosterSlotTemplates] = await Promise.all([
+    prisma.$transaction([
+      prisma.owner.findMany({ orderBy: { name: "asc" } }),
+      prisma.ownerCode.findMany({ orderBy: [{ code: "asc" }] }),
+      prisma.draftSlot.findMany({
+        include: {
+          currentOwner: true,
+          defaultOwner: true,
+          selectedPlayer: true,
+          keeper: true,
+        },
+        orderBy: { overallPickNumber: "asc" },
+      }),
+      prisma.keeper.findMany({
+        include: { owner: true, player: true, draftSlot: true },
+        orderBy: [{ sport: "asc" }, { playerName: "asc" }],
+      }),
+      prisma.rosterLimit.findMany({ orderBy: { sport: "asc" } }),
+      prisma.leagueSettings.findFirstOrThrow(),
+    ]),
+    getRosterSlotSettings(),
   ]);
+  const [owners, ownerCodes, rawSlots, keepers, rosterLimits, settings] = leagueData;
 
   const slots = await enrichDraftSlotsWithCurrentPlayerEligibility(rawSlots as DraftSlotWithRelations[]);
   const ownerTotals = calculateRosterTotals({
@@ -56,6 +61,7 @@ export async function getLeagueSnapshot(): Promise<LeagueSnapshot> {
     slots,
     keepers: keepers as KeeperWithRelations[],
     rosterLimits,
+    rosterSlotTemplates,
     settings,
     ownerTotals,
     leagueTotals,

@@ -13,6 +13,7 @@ import {
   saveGoogleSheetSourceConfig,
   syncLeagueFromKeeperGoogleSheet,
 } from "@/lib/import/google-sheets";
+import { getDefaultRosterSlotTemplates, parseRosterSlotTemplate, saveRosterSlotSettings } from "@/lib/roster/settings";
 import { normalizePlayerName } from "@/lib/utils/draft";
 
 const DRAFT_STATE_SNAPSHOT_SOURCE_ID = "draft-state-snapshot-source";
@@ -44,22 +45,43 @@ function serializeDate(value: Date | null | undefined) {
 }
 
 export async function updateRosterLimits(formData: FormData) {
-  const ownerCount = await prisma.owner.count();
-  const sports = Object.values(Sport);
+  let redirectPath = "/admin?status=success&message=Roster%20settings%20updated.";
 
-  await Promise.all(
-    sports.map((sport) => {
-      const rawValue = formData.get(`rosterLimit-${sport}`);
-      const perOwnerLimit = Number(rawValue);
+  try {
+    const ownerCount = await prisma.owner.count();
+    const sports = Object.values(Sport);
+    const defaultTemplates = getDefaultRosterSlotTemplates();
+    const rosterSlotTemplates = sports.reduce<ReturnType<typeof getDefaultRosterSlotTemplates>>((accumulator, sport) => {
+      const rawLimit = formData.get(`rosterLimit-${sport}`);
+      const perOwnerLimit = Number(rawLimit);
+      const rawSlots = String(formData.get(`rosterSlots-${sport}`) ?? "").trim();
 
-      return prisma.rosterLimit.update({
-        where: { sport },
-        data: { perOwnerLimit, leagueTotal: perOwnerLimit * ownerCount },
-      });
-    }),
-  );
+      if (!Number.isInteger(perOwnerLimit) || perOwnerLimit <= 0) {
+        throw new Error(`${sport.toLowerCase()} roster size must be a positive whole number.`);
+      }
 
-  revalidateAdminViews();
+      accumulator[sport] = rawSlots ? parseRosterSlotTemplate(sport, rawSlots, perOwnerLimit) : defaultTemplates[sport];
+      return accumulator;
+    }, defaultTemplates);
+
+    await prisma.$transaction(
+      sports.map((sport) => {
+        const perOwnerLimit = Number(formData.get(`rosterLimit-${sport}`));
+
+        return prisma.rosterLimit.update({
+          where: { sport },
+          data: { perOwnerLimit, leagueTotal: perOwnerLimit * ownerCount },
+        });
+      }),
+    );
+    await saveRosterSlotSettings(rosterSlotTemplates);
+
+    revalidateAdminViews();
+  } catch (error) {
+    redirectPath = `/admin?status=error&message=${encodeURIComponent(error instanceof Error ? error.message : "Could not update roster settings.")}`;
+  }
+
+  redirect(redirectPath);
 }
 
 export async function updateTradedPick(formData: FormData) {

@@ -16,6 +16,7 @@ import {
 import { parseKeeperText } from "@/lib/keepers/import";
 import { parsePlayerImportText } from "@/lib/players/import";
 import { evaluateRosterFit, getRosterPositionSlots, normalizePositions } from "@/lib/roster/positions";
+import { parseRosterSlotTemplate } from "@/lib/roster/settings";
 import { calculateRosterTotals, validateLeagueTotals } from "@/lib/validation/draft";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/keeper-grid-2026.tsv", import.meta.url));
@@ -307,6 +308,16 @@ test("baseball roster template matches league lineup settings", () => {
     "BENCH",
     "BENCH",
   ]);
+});
+
+test("parses configurable roster slot shorthand", () => {
+  const slots = parseRosterSlotTemplate(Sport.BASEBALL, "1 C, 1 1B, 4 OF, 5 SP, 2 RP, 1 P, 3 BENCH", 22);
+
+  assert.deepEqual(slots, ["C", "1B", "OF", "OF", "OF", "OF", "SP", "SP", "SP", "SP", "SP", "RP", "RP", "P", "BENCH", "BENCH", "BENCH"]);
+});
+
+test("rejects roster slot templates larger than roster size", () => {
+  assert.throws(() => parseRosterSlotTemplate(Sport.GOLF, "GOLFER, GOLFER, GOLFER", 2), /3 roster spots but roster size is 2/);
 });
 
 test("basketball roster fit can move a PF/C into center when needed", () => {

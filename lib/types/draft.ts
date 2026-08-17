@@ -1,5 +1,6 @@
 import { DraftSlot, Keeper, LeagueSettings, Owner, OwnerCode, Player, RosterLimit } from "@prisma/client";
 
+import type { RosterSlotTemplateMap } from "@/lib/roster/settings";
 import { OwnerTotals } from "@/lib/validation/draft";
 
 export type DraftSlotWithRelations = DraftSlot & {
@@ -21,6 +22,7 @@ export type LeagueSnapshot = {
   slots: DraftSlotWithRelations[];
   keepers: KeeperWithRelations[];
   rosterLimits: RosterLimit[];
+  rosterSlotTemplates: RosterSlotTemplateMap;
   settings: LeagueSettings;
   ownerTotals: OwnerTotals[];
   leagueTotals: ReturnType<typeof import("@/lib/validation/draft").validateLeagueTotals>;

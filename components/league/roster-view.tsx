@@ -25,7 +25,8 @@ export function RosterView({ allowPositionOverrides = true, snapshot }: { allowP
   const selectedOwner = snapshot.owners.find((owner) => owner.id === selectedOwnerId);
   const selectedOwnerTotals = snapshot.ownerTotals.find((row) => row.owner.id === selectedOwnerId);
   const selectedSportTotals = selectedOwnerTotals?.bySport[selectedSport];
-  const rosterLimit = selectedSportTotals?.limit ?? getRosterPositionSlots(selectedSport).length;
+  const configuredSlots = snapshot.rosterSlotTemplates[selectedSport];
+  const rosterLimit = selectedSportTotals?.limit ?? getRosterPositionSlots(selectedSport, null, configuredSlots).length;
   const selectedRoster: DraftRosterPlayer[] = snapshot.slots
     .filter((slot) => slot.currentOwnerId === selectedOwnerId && slot.selectedSport === selectedSport && slot.selectedPlayerName)
     .map((slot) => ({
@@ -39,7 +40,7 @@ export function RosterView({ allowPositionOverrides = true, snapshot }: { allowP
       playerId: slot.selectedPlayer?.id ?? null,
       round: slot.round,
     }));
-  const rosterFit = evaluateRosterFit(selectedSport, selectedRoster, rosterLimit);
+  const rosterFit = evaluateRosterFit(selectedSport, selectedRoster, rosterLimit, configuredSlots);
   const assignmentsWithLabels = labelRepeatedRosterSlots(rosterFit.assignments);
   const lineupAssignments = assignmentsWithLabels.filter((assignment) => assignment.slot !== "BENCH");
   const benchAssignments = assignmentsWithLabels.filter((assignment) => assignment.slot === "BENCH");

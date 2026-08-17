@@ -16,6 +16,8 @@ import { Card } from "@/components/ui/card";
 import { prisma } from "@/lib/db/prisma";
 import { getLeagueSnapshot } from "@/lib/draft/service";
 import { getGoogleSheetSourceConfig } from "@/lib/import/google-sheets";
+import { getRosterPositionSlots } from "@/lib/roster/positions";
+import { formatRosterSlotTemplate } from "@/lib/roster/settings";
 import { sportWithEmoji } from "@/lib/utils/format";
 
 export async function AdminPanel({
@@ -49,18 +51,22 @@ export async function AdminPanel({
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
-          <h2 className="text-xl font-semibold">Manage roster limits</h2>
+          <h2 className="text-xl font-semibold">Manage roster settings</h2>
           <p className="mt-2 text-sm text-[var(--muted)]">
-            Set the roster size for each sport. These values are the backbone of the draft and help prevent mistakes like someone accidentally taking a 16th baseball player.
+            Set roster size and lineup spots for each sport. These values are the backbone of draft validation and the roster-entry page.
           </p>
           <form action={updateRosterLimits} className="mt-4 space-y-4">
-            <div className="hidden gap-3 px-4 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)] md:grid md:grid-cols-[1fr_1fr_auto]">
+            <div className="hidden gap-3 px-4 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)] md:grid md:grid-cols-[0.7fr_0.45fr_1.85fr]">
               <div>Sport</div>
               <div>Roster size</div>
-              <div />
+              <div>Roster spots</div>
             </div>
-            {snapshot.rosterLimits.map((limit) => (
-              <div className="grid gap-3 rounded-2xl border border-[var(--border)] p-4 md:grid-cols-[1fr_1fr_auto]" key={limit.id}>
+            {snapshot.rosterLimits.map((limit) => {
+              const configuredSlots = snapshot.rosterSlotTemplates[limit.sport];
+              const slots = getRosterPositionSlots(limit.sport, limit.perOwnerLimit, configuredSlots);
+
+              return (
+              <div className="grid gap-3 rounded-2xl border border-[var(--border)] p-4 md:grid-cols-[0.7fr_0.45fr_1.85fr]" key={limit.id}>
                 <div>
                   <p className="text-sm font-semibold">{sportWithEmoji(limit.sport)}</p>
                 </div>
@@ -73,12 +79,23 @@ export async function AdminPanel({
                     type="number"
                   />
                 </div>
-                <div />
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)] md:hidden">Roster spots</label>
+                  <textarea
+                    className="min-h-20 w-full rounded-xl border border-[var(--border)] px-3 py-2 font-mono text-xs"
+                    defaultValue={formatRosterSlotTemplate(slots)}
+                    name={`rosterSlots-${limit.sport}`}
+                  />
+                  <p className="text-xs text-[var(--muted)]">
+                    Tip: use commas or shorthand like <span className="font-mono">5 SP, 2 RP, 1 P</span>. If spots are fewer than roster size, extra spots become Bench.
+                  </p>
+                </div>
               </div>
-            ))}
+            );
+            })}
             <div className="flex justify-end">
               <button className="rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-white" type="submit">
-                Save roster sizes
+                Save roster settings
               </button>
             </div>
           </form>

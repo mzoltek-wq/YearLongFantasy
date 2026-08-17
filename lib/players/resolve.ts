@@ -3,6 +3,7 @@ import { Prisma, Sport } from "@prisma/client";
 import { SPORT_LABELS } from "@/lib/constants/league";
 import { prisma } from "@/lib/db/prisma";
 import { extractPositionsFromMetadata, normalizePositions, PositionCode, RosterPlayer, evaluateRosterFit } from "@/lib/roster/positions";
+import { getRosterSlotSettings } from "@/lib/roster/settings";
 import { normalizePlayerName, parseSportFromValue, stripPlayerDecorators } from "@/lib/utils/draft";
 
 const POSITION_TOKEN_REGEX = /\b(C|1B|2B|3B|SS|OF|DH|SP|RP|PG|SG|SF|PF|QB|RB|WR|TE|DST|DEF|K|LW|RW|D|G|F)\b/gi;
@@ -352,7 +353,8 @@ export async function resolveDraftPlayerWithRosterWarnings({
     sport: resolution.sport,
     positions: resolution.positions,
   };
-  const fit = evaluateRosterFit(resolution.sport, [...existingRosterPlayers, candidateRosterPlayer]);
+  const rosterSlotSettings = await getRosterSlotSettings();
+  const fit = evaluateRosterFit(resolution.sport, [...existingRosterPlayers, candidateRosterPlayer], null, rosterSlotSettings[resolution.sport]);
   const rosterWarnings = fit.warnings.map((warning) => `${SPORT_LABELS[resolution.sport!]} roster warning: ${warning}`);
 
   return {
