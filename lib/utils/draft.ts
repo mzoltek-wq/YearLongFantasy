@@ -9,6 +9,7 @@ export function normalizePlayerName(input: string) {
   return input
     .replace(EMOJI_REGEX, "")
     .replace(PARENTHETICAL_REGEX, "")
+    .replace(/['\u2019]/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();

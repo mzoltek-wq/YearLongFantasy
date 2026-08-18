@@ -62,10 +62,30 @@ export type DraftPlayerSimilarSelection = DraftPlayerUnavailableSelection & {
 
 export function cleanDraftPlayerName(rawValue: string) {
   return stripPlayerDecorators(rawValue)
+    .replace(/['\u2019]/g, "")
     .replace(SPORT_WORD_REGEX, " ")
     .replace(POSITION_TOKEN_REGEX, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function legacyNormalizePlayerName(input: string) {
+  return input
+    .replace(/[\p{Extended_Pictographic}\uFE0F]/gu, "")
+    .replace(/\(([^)]+)\)/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function getNormalizedLookupNames(cleanedName: string, rawPlayerName: string) {
+  return Array.from(
+    new Set([
+      normalizePlayerName(cleanedName || rawPlayerName),
+      legacyNormalizePlayerName(cleanedName || rawPlayerName),
+      legacyNormalizePlayerName(stripPlayerDecorators(rawPlayerName)),
+    ].filter(Boolean)),
+  );
 }
 
 export function parseTypedPositions(rawValue: string, sport: Sport | null) {
@@ -87,6 +107,7 @@ export async function findDraftPlayerCandidates(
 ): Promise<DraftPlayerCandidate[]> {
   const cleanedName = cleanDraftPlayerName(playerName);
   const normalizedName = normalizePlayerName(cleanedName || playerName);
+  const normalizedLookupNames = getNormalizedLookupNames(cleanedName, playerName);
 
   if (normalizedName.length < 2) {
     return [];
@@ -94,9 +115,11 @@ export async function findDraftPlayerCandidates(
 
   const players = await tx.player.findMany({
     where: {
-      normalizedName: {
-        contains: normalizedName,
-      },
+      OR: normalizedLookupNames.map((lookupName) => ({
+        normalizedName: {
+          contains: lookupName,
+        },
+      })),
     },
     select: {
       id: true,
@@ -137,9 +160,14 @@ export async function resolveDraftPlayer(
 ): Promise<DraftPlayerResolution> {
   const cleanedName = cleanDraftPlayerName(playerName);
   const normalizedName = normalizePlayerName(cleanedName || playerName);
+  const normalizedLookupNames = getNormalizedLookupNames(cleanedName, playerName);
   const typedSport = parseSportFromValue(playerName);
-  const existingPlayer = await tx.player.findUnique({
-    where: { normalizedName },
+  const existingPlayer = await tx.player.findFirst({
+    where: {
+      normalizedName: {
+        in: normalizedLookupNames,
+      },
+    },
   });
   const sport = existingPlayer?.sport ?? typedSport;
   const metadata = (existingPlayer?.metadata ?? null) as PlayerMetadata | null;

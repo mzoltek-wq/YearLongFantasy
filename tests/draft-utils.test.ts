@@ -15,6 +15,7 @@ import {
 } from "@/lib/utils/draft";
 import { parseKeeperText } from "@/lib/keepers/import";
 import { parsePlayerImportText } from "@/lib/players/import";
+import { cleanDraftPlayerName } from "@/lib/players/resolve";
 import { evaluateRosterFit, extractPositionsFromMetadata, getRosterConstructionWarnings, getRosterPositionSlots, normalizePositions } from "@/lib/roster/positions";
 import { parseRosterSlotTemplate } from "@/lib/roster/settings";
 import { calculateRosterTotals, getCurrentDraftWindow, validateLeagueTotals } from "@/lib/validation/draft";
@@ -37,6 +38,13 @@ test("parses owner override while ignoring keeper tokens", () => {
 
 test("normalizes player names", () => {
   assert.equal(normalizePlayerName("(ME) ⚾️ Player Name"), "player name");
+  assert.equal(normalizePlayerName("D'Andre Swift"), "dandre swift");
+  assert.equal(normalizePlayerName("D\u2019Andre Swift"), "dandre swift");
+});
+
+test("cleans apostrophe names without stripping position-like initials", () => {
+  assert.equal(cleanDraftPlayerName("D'Andre Swift"), "DAndre Swift");
+  assert.equal(cleanDraftPlayerName("D\u2019Andre Swift"), "DAndre Swift");
 });
 
 test("detects duplicates", () => {
