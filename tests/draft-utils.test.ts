@@ -17,7 +17,7 @@ import { parseKeeperText } from "@/lib/keepers/import";
 import { parsePlayerImportText } from "@/lib/players/import";
 import { evaluateRosterFit, extractPositionsFromMetadata, getRosterConstructionWarnings, getRosterPositionSlots, normalizePositions } from "@/lib/roster/positions";
 import { parseRosterSlotTemplate } from "@/lib/roster/settings";
-import { calculateRosterTotals, validateLeagueTotals } from "@/lib/validation/draft";
+import { calculateRosterTotals, getCurrentDraftWindow, validateLeagueTotals } from "@/lib/validation/draft";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/keeper-grid-2026.tsv", import.meta.url));
 
@@ -236,6 +236,69 @@ test("calculates roster totals and validates league totals", () => {
     "below",
   );
   assert.equal(leagueTotals.bySport.find((entry) => entry.sport === Sport.HOCKEY)?.target, 2);
+});
+
+test("current draft window skips keeper slots for next up", () => {
+  const baseSlot = {
+    id: "slot",
+    round: 8,
+    slotNumber: 1,
+    defaultOwnerId: "hoff",
+    overrideOwnerCode: null,
+    currentOwnerId: "hoff",
+    selectedPlayerId: null,
+    selectedPlayerName: null,
+    selectedSport: null,
+    originalRawValue: null,
+    selectedAt: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+  const slots = [
+    {
+      ...baseSlot,
+      id: "pick-78",
+      overallPickNumber: 78,
+      slotNumber: 8,
+      isKeeper: false,
+      currentOwnerId: "hoff",
+    },
+    {
+      ...baseSlot,
+      id: "pick-79",
+      overallPickNumber: 79,
+      slotNumber: 9,
+      isKeeper: true,
+      currentOwnerId: "joe",
+      selectedPlayerName: "Yordan Alvarez",
+      selectedSport: Sport.BASEBALL,
+    },
+    {
+      ...baseSlot,
+      id: "pick-80",
+      overallPickNumber: 80,
+      slotNumber: 10,
+      isKeeper: true,
+      currentOwnerId: "hoff",
+      selectedPlayerName: "Donovan Mitchell",
+      selectedSport: Sport.BASKETBALL,
+    },
+    {
+      ...baseSlot,
+      id: "pick-81",
+      round: 9,
+      overallPickNumber: 81,
+      slotNumber: 1,
+      isKeeper: false,
+      currentOwnerId: "hoff",
+    },
+  ];
+
+  const draftWindow = getCurrentDraftWindow(slots);
+
+  assert.equal(draftWindow.currentPick?.overallPickNumber, 78);
+  assert.equal(draftWindow.nextPick?.overallPickNumber, 81);
+  assert.equal(draftWindow.nextPick?.currentOwnerId, "hoff");
 });
 
 test("parses ESPN-style player import rows", () => {

@@ -131,15 +131,16 @@ export function validateLeagueTotals(slots: DraftSlot[], limits: RosterLimit[], 
 }
 
 export function getCurrentDraftWindow<T extends DraftSlot>(slots: T[]) {
-  const sorted = [...slots].sort((a, b) => a.overallPickNumber - b.overallPickNumber);
-  const currentIndex = sorted.findIndex((slot) => !slot.selectedPlayerName);
-  const currentPick = currentIndex === -1 ? null : sorted[currentIndex];
-  const nextPick = currentIndex === -1 ? null : sorted[currentIndex + 1] ?? null;
+  const liveDraftQueue = [...slots]
+    .filter((slot) => !slot.isKeeper && !slot.selectedPlayerName)
+    .sort((a, b) => a.overallPickNumber - b.overallPickNumber);
+  const currentPick = liveDraftQueue[0] ?? null;
+  const nextPick = liveDraftQueue[1] ?? null;
 
   return {
     currentPick,
     nextPick,
-    completed: currentIndex === -1,
+    completed: !currentPick,
   };
 }
 
