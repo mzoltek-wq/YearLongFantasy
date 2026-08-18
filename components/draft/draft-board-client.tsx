@@ -90,6 +90,7 @@ export function DraftBoardClient({
   const [isResolvingPlayer, setIsResolvingPlayer] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [ignoredPlayerWarnings, setIgnoredPlayerWarnings] = useState<string[]>([]);
 
   async function refresh() {
     const data = await requestJson<LeagueSnapshot>("/api/draft");
@@ -105,6 +106,7 @@ export function DraftBoardClient({
   const takenSelection = playerResolution?.takenSelection ?? playerResolution?.unavailableSelection ?? null;
   const isPlayerUnavailable = Boolean(playerResolution?.isTaken || takenSelection);
   const generalPlayerWarnings = playerResolution?.warnings ?? [];
+  const visibleGeneralPlayerWarnings = generalPlayerWarnings.filter((warning) => !ignoredPlayerWarnings.includes(warning));
   const rosterConstructionWarnings = playerResolution?.rosterWarnings ?? [];
   const hasPlayerText = playerName.trim().length > 0;
   const needsPlayerValidation = playerName.trim().length >= 2;
@@ -183,6 +185,7 @@ export function DraftBoardClient({
         .then((resolution) => {
           if (isCurrent) {
             setPlayerResolution(resolution);
+            setIgnoredPlayerWarnings((warnings) => warnings.filter((warning) => resolution.warnings.includes(warning)));
           }
         })
         .catch(() => {
@@ -308,6 +311,7 @@ export function DraftBoardClient({
       });
       setPlayerName("");
       setPlayerResolution(null);
+      setIgnoredPlayerWarnings([]);
       setEditingPickNumber(null);
       setMessage(editingPick ? `Updated pick ${activePick.overallPickNumber}.` : `Saved pick ${activePick.overallPickNumber}.`);
       await refresh();
@@ -322,6 +326,7 @@ export function DraftBoardClient({
     setEditingPickNumber(slot.overallPickNumber);
     setPlayerName(slot.selectedPlayerName ?? "");
     setPlayerResolution(null);
+    setIgnoredPlayerWarnings([]);
     setIsResolvingPlayer(Boolean(slot.selectedPlayerName));
   }
 
@@ -329,6 +334,7 @@ export function DraftBoardClient({
     setEditingPickNumber(null);
     setPlayerName("");
     setPlayerResolution(null);
+    setIgnoredPlayerWarnings([]);
     setIsResolvingPlayer(false);
   }
 
@@ -456,10 +462,21 @@ export function DraftBoardClient({
                   <p className="text-xs text-[var(--muted)]">
                     Source: sport from {playerResolution.sportSource.replace("-", " ")}, positions from {playerResolution.positionSource.replace("-", " ")}.
                   </p>
-                  {generalPlayerWarnings.length > 0 ? (
+                  {visibleGeneralPlayerWarnings.length > 0 ? (
                     <div className={`space-y-1 rounded-xl px-3 py-2 text-xs ${isPlayerUnavailable ? "bg-rose-50 text-rose-900" : "bg-amber-50 text-amber-900"}`}>
-                      {generalPlayerWarnings.map((warning) => (
-                        <p key={warning}>{warning}</p>
+                      {visibleGeneralPlayerWarnings.map((warning) => (
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between" key={warning}>
+                          <p>{warning}</p>
+                          {!isPlayerUnavailable && warning.includes(" looks like ") ? (
+                            <button
+                              className="self-start rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-900 transition hover:border-amber-400"
+                              onClick={() => setIgnoredPlayerWarnings((warnings) => [...new Set([...warnings, warning])])}
+                              type="button"
+                            >
+                              Ignore warning
+                            </button>
+                          ) : null}
+                        </div>
                       ))}
                     </div>
                   ) : null}
@@ -470,7 +487,7 @@ export function DraftBoardClient({
                       ))}
                     </div>
                   ) : null}
-                  {generalPlayerWarnings.length === 0 && rosterConstructionWarnings.length === 0 ? (
+                  {visibleGeneralPlayerWarnings.length === 0 && rosterConstructionWarnings.length === 0 ? (
                     <p className="rounded-xl bg-emerald-50 px-3 py-2 text-xs text-emerald-800">Looks eligible based on cached player data.</p>
                   ) : (
                     null

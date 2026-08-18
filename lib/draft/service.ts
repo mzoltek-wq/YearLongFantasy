@@ -290,18 +290,8 @@ async function enforcePlayerAvailability(
     );
   }
 
-  const similarSelection = await findSimilarDraftSelection({
-    playerName: input.playerName,
-    sport: input.sport,
-    overallPickNumberToIgnore: input.overallPickNumberToIgnore,
-    tx,
-  });
-
-  if (similarSelection) {
-    throw new Error(
-      `"${input.playerName}" looks like "${similarSelection.playerName}", already ${similarSelection.isKeeper ? "kept" : "drafted"} by ${similarSelection.ownerName} at pick ${similarSelection.overallPickNumber}. Check the spelling before saving.`,
-    );
-  }
+  // Similar-name matches are advisory only. Exact duplicate checks above still
+  // block, but players like Jalen Brunson should not be stopped by Jalen Johnson.
 }
 
 async function findManagerForOwner(tx: Prisma.TransactionClient, ownerId: string) {
